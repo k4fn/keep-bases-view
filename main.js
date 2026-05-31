@@ -70,6 +70,7 @@ class KeepGridView extends obsidian.BasesView {
 		this._cardWidthTablet = 200;
 		this._cardWidthMobile = 150;
 		this._lastColumnCount = null; // FLIPアニメーション用
+		this._suppressNextAnimation = false; // render直後のアニメーション抑制フラグ
 		this._showTags     = true;
 		this._showPinned   = true;
 		this._imageFit     = "cover";
@@ -220,7 +221,7 @@ class KeepGridView extends obsidian.BasesView {
 
 		// 再レンダー後の最初の _updateGridWidth() はアニメーションさせない
 		// （ノートから戻ったときなどにアニメーションが走るのを防ぐ）
-		this._lastColumnCount = null;
+		this._suppressNextAnimation = true;
 		
 		el.style.setProperty("--kg-card-max-height", `${this._cardMaxHeight}px`);
 		el.style.setProperty("--kg-card-max-lines", Math.floor(this._cardMaxHeight / 19.5).toString());
@@ -272,45 +273,46 @@ class KeepGridView extends obsidian.BasesView {
 
 		// カラム数が変化したときのみFLIPを実行（毎ピクセルのリサイズでは発火しない）
 		const prevN = this._lastColumnCount;
-		const shouldAnimate = prevN !== null && prevN !== n;
+		// _suppressNextAnimation が true のとき（render直後）はアニメーションしない
+		const shouldAnimate = prevN !== null && prevN !== n && !this._suppressNextAnimation;
+		this._suppressNextAnimation = false;
 		this._lastColumnCount = n;
 
 		for (const grid of this._containerEl.querySelectorAll(".kg-grid")) {
 			if (shouldAnimate) {
-				// FLIP: First — 変更前の各カード座標を記録
 				const cards = [...grid.querySelectorAll(".kg-card")];
+
+				// 進行中のWeb Animationsをキャンセルして現在の座標を確定
+				cards.forEach(card => card.getAnimations().forEach(a => a.cancel()));
+
+				// FLIP: First — 旧座標を記録
 				const oldRects = cards.map(c => c.getBoundingClientRect());
 
-				// FLIP: Last — レイアウトを即座に適用
+				// FLIP: Last — 新レイアウトを適用してリフロー強制
 				grid.style.setProperty("--kg-columns", String(n));
 				grid.style.width = `${gridWidth}px`;
+				void grid.offsetHeight; // 新レイアウトをコミット
 
-				// FLIP: Invert & Play — 旧座標に巧居りしてから新座標へアニメーション
+				// 新座標を一括取得
+				const newRects = cards.map(c => c.getBoundingClientRect());
+
+				// Play: Web Animations API で旧座標→新座標へ一括アニメーション
+				// CSS transitionと違い「コミット→transition開始」のタイミング問題がない
 				cards.forEach((card, i) => {
-					const newRect = card.getBoundingClientRect();
-					const dx = oldRects[i].left - newRect.left;
-					const dy = oldRects[i].top  - newRect.top;
-
+					const dx = oldRects[i].left - newRects[i].left;
+					const dy = oldRects[i].top  - newRects[i].top;
 					if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-
-					// 旧座標に瞬時戻す（transitionなし）
-					card.style.transition = "none";
-					card.style.transform  = `translate(${dx}px, ${dy}px)`;
-
-					// リフローを強制して "none" 状態をコミット
-					void card.offsetWidth;
-
-					// 新座標へアニメーション
-					card.style.transition = "transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)";
-					card.style.transform  = "";
-
-					// 完了後にインラインスタイルをクリーンアップ（hoverのtransformを活かす）
-					const onEnd = (e) => {
-						if (e.propertyName !== "transform") return;
-						card.style.transition = "";
-						card.removeEventListener("transitionend", onEnd);
-					};
-					card.addEventListener("transitionend", onEnd);
+					card.animate(
+						[
+							{ transform: `translate(${dx}px, ${dy}px)` },
+							{ transform: "translate(0, 0)" }
+						],
+						{
+							duration: 350,
+							easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+							fill: "none",
+						}
+					);
 				});
 			} else {
 				// 初回レンダーまたは同カラム数の場合は即座に適用
