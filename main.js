@@ -120,26 +120,26 @@ class KeepGridView extends obsidian.BasesView {
 	static getViewOptions() {
 		return [
 			{
-				displayName: "カードタイトルのプロパティ",
+				displayName: "Card title property",
 				type: "property",
 				key: "cardTitleProperty",
-				placeholder: "デフォルト: ファイル名",
+				placeholder: "Default: file name",
 			},
 			{
-				displayName: "画像プロパティ",
+				displayName: "Cover image property",
 				type: "property",
 				key: "imageProperty",
-				placeholder: "任意: カバー画像のプロパティを指定",
+				placeholder: "Optional: property containing the cover image",
 			},
 			{
-				displayName: "画像の表示方法",
+				displayName: "Image fit",
 				type: "dropdown",
 				key: "imageFit",
 				default: "cover",
-				options: { cover: "枠に合わせて切り抜き (Cover)", contain: "画像全体を表示 (Contain)" },
+				options: { cover: "Crop to fill (Cover)", contain: "Show full image (Contain)" },
 			},
 			{
-				displayName: "カード幅 (PC) (px)",
+				displayName: "Card width — Desktop (px)",
 				type: "slider",
 				key: "cardWidthPc",
 				default: 240,
@@ -148,7 +148,7 @@ class KeepGridView extends obsidian.BasesView {
 				step: 5,
 			},
 			{
-				displayName: "カード幅 (タブレット) (px)",
+				displayName: "Card width — Tablet (px)",
 				type: "slider",
 				key: "cardWidthTablet",
 				default: 200,
@@ -157,7 +157,7 @@ class KeepGridView extends obsidian.BasesView {
 				step: 5,
 			},
 			{
-				displayName: "カード幅 (スマホ) (px)",
+				displayName: "Card width — Mobile (px)",
 				type: "slider",
 				key: "cardWidthMobile",
 				default: 150,
@@ -166,23 +166,23 @@ class KeepGridView extends obsidian.BasesView {
 				step: 5,
 			},
 			{
-				displayName: "タグを表示する",
+				displayName: "Show tags",
 				type: "toggle",
 				key: "showTags",
 			},
 			{
-				displayName: "ピン留めしたノートを上部に表示",
+				displayName: "Pin important notes to the top",
 				type: "toggle",
 				key: "showPinned",
 			},
 			{
-				displayName: ".baseファイルの中身をプレビューする",
+				displayName: "Preview .base file contents",
 				type: "toggle",
 				key: "showBasePreview",
 				default: true,
 			},
 			{
-				displayName: "カードのプレビュー最大高さ (px)",
+				displayName: "Card preview max height (px)",
 				type: "slider",
 				key: "cardMaxHeight",
 				default: 320,
@@ -191,7 +191,7 @@ class KeepGridView extends obsidian.BasesView {
 				step: 5,
 			},
 			{
-				displayName: ".baseプレビューの固定高さ (px)",
+				displayName: ".base embed fixed height (px)",
 				type: "slider",
 				key: "basePreviewHeight",
 				default: 150,
@@ -249,10 +249,10 @@ class KeepGridView extends obsidian.BasesView {
 		}
 
 		if (pinned.length > 0) {
-			this._renderSection(el, "固定済み", pinned);
+			this._renderSection(el, "Pinned", pinned);
 		}
 		if (normal.length > 0) {
-			this._renderSection(el, pinned.length > 0 ? "その他" : null, normal);
+			this._renderSection(el, pinned.length > 0 ? "Others" : null, normal);
 		}
 
 		// レンダー後にグリッド幅を確定させる
@@ -413,7 +413,7 @@ class KeepGridView extends obsidian.BasesView {
 
 		const handlePin = async () => {
 			if (file.extension !== "md") {
-				new obsidian.Notice("ピン留めはMarkdown(.md)ファイルでのみサポートされています。");
+				new obsidian.Notice("Pinning is only supported for Markdown (.md) files.");
 				return;
 			}
 			await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
@@ -427,22 +427,22 @@ class KeepGridView extends obsidian.BasesView {
 			document.querySelectorAll(".kg-color-palette").forEach(el => el.remove());
 
 			if (file.extension !== "md") {
-				new obsidian.Notice("色の変更はMarkdown(.md)ファイルでのみサポートされています。");
+				new obsidian.Notice("Color change is only supported for Markdown (.md) files.");
 				return;
 			}
 
 			const currentColor = fm["keep_color"] ?? "default";
 
 			const colors = [
-				{ id: "default", label: "デフォルト", hex: null },
-				{ id: "red",     label: "レッド",     hex: "#f28b82" },
-				{ id: "orange",  label: "オレンジ",   hex: "#fbbc04" },
-				{ id: "yellow",  label: "イエロー",   hex: "#fff475" },
-				{ id: "green",   label: "グリーン",   hex: "#ccff90" },
-				{ id: "cyan",    label: "シアン",     hex: "#a8f0e0" },
-				{ id: "blue",    label: "ブルー",     hex: "#aecbfa" },
-				{ id: "purple",  label: "パープル",   hex: "#d7aefb" },
-				{ id: "pink",    label: "ピンク",     hex: "#fdcfe8" },
+				{ id: "default", label: "Default", hex: null },
+				{ id: "red",     label: "Red",     hex: "#f28b82" },
+				{ id: "orange",  label: "Orange",  hex: "#fbbc04" },
+				{ id: "yellow",  label: "Yellow",  hex: "#fff475" },
+				{ id: "green",   label: "Green",   hex: "#ccff90" },
+				{ id: "cyan",    label: "Cyan",    hex: "#a8f0e0" },
+				{ id: "blue",    label: "Blue",    hex: "#aecbfa" },
+				{ id: "purple",  label: "Purple",  hex: "#d7aefb" },
+				{ id: "pink",    label: "Pink",    hex: "#fdcfe8" },
 			];
 
 			const palette = document.createElement("div");
@@ -499,7 +499,7 @@ class KeepGridView extends obsidian.BasesView {
 		};
 
 		const handleDelete = async () => {
-			new ConfirmModal(this.app, `「${file.name}」を削除してゴミ箱に移動しますか？`, async () => {
+			new ConfirmModal(this.app, `Move "${file.name}" to trash?`, async () => {
 				await this.app.vault.trash(file, true);
 			}).open();
 		};
@@ -509,7 +509,7 @@ class KeepGridView extends obsidian.BasesView {
 			// Pin button (Top Right)
 			const pinBtn = cardEl.createEl("button", { 
 				cls: "kg-pin-btn clickable-icon" + (isPinned ? " is-pinned" : ""), 
-				attr: { "aria-label": isPinned ? "ピン留め解除" : "ピン留め" } 
+				attr: { "aria-label": isPinned ? "Unpin" : "Pin" } 
 			});
 			obsidian.setIcon(pinBtn, isPinned ? "pin-off" : "pin");
 			pinBtn.addEventListener("click", (e) => { e.stopPropagation(); handlePin(); });
@@ -517,11 +517,11 @@ class KeepGridView extends obsidian.BasesView {
 			// Bottom Right Actions
 			const actionsEl = cardEl.createDiv({ cls: "kg-card-actions" });
 			
-			const colBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "色を変更" } });
+			const colBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "Change color" } });
 			obsidian.setIcon(colBtn, "palette");
 			colBtn.addEventListener("click", (e) => { e.stopPropagation(); handleColorChange(e); });
 			
-			const delBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "削除" } });
+			const delBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "Delete" } });
 			obsidian.setIcon(delBtn, "trash");
 			delBtn.addEventListener("click", (e) => { e.stopPropagation(); handleDelete(); });
 		}
@@ -531,7 +531,7 @@ class KeepGridView extends obsidian.BasesView {
 			e.preventDefault();
 			const menu = new obsidian.Menu();
 			menu.addItem((item) => {
-				item.setTitle("新しいタブで開く")
+				item.setTitle("Open in new tab")
 					.setIcon("file-plus")
 					.onClick(() => {
 						const leaf = this.app.workspace.getLeaf("tab");
@@ -540,17 +540,17 @@ class KeepGridView extends obsidian.BasesView {
 			});
 			menu.addSeparator();
 			menu.addItem((item) => {
-				item.setTitle(isPinned ? "ピン留めを解除" : "ピン留め")
+				item.setTitle(isPinned ? "Unpin" : "Pin")
 					.setIcon(isPinned ? "pin-off" : "pin")
 					.onClick(handlePin);
 			});
 			menu.addItem((item) => {
-				item.setTitle("色を変更")
+				item.setTitle("Change color")
 					.setIcon("palette")
 					.onClick(() => handleColorChange(e));
 			});
 			menu.addItem((item) => {
-				item.setTitle("削除")
+				item.setTitle("Delete")
 					.setIcon("trash")
 					.onClick(handleDelete);
 			});
@@ -711,15 +711,15 @@ class ConfirmModal extends obsidian.Modal {
 
 	onOpen() {
 		const { contentEl } = this;
-		contentEl.createEl("h3", { text: "確認" });
+		contentEl.createEl("h3", { text: "Confirm" });
 		contentEl.createEl("p", { text: this.message });
 
 		const btnContainer = contentEl.createDiv({ cls: "modal-button-container" });
 		
-		const cancelBtn = btnContainer.createEl("button", { text: "キャンセル" });
+		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
 		cancelBtn.addEventListener("click", () => this.close());
 		
-		const confirmBtn = btnContainer.createEl("button", { text: "削除", cls: "mod-warning" });
+		const confirmBtn = btnContainer.createEl("button", { text: "Delete", cls: "mod-warning" });
 		confirmBtn.addEventListener("click", () => {
 			this.onConfirm();
 			this.close();
@@ -740,11 +740,11 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 	display() {
 		const { containerEl } = this;
 		containerEl.empty();
-		containerEl.createEl("h2", { text: "Keep Bases View 設定" });
+		containerEl.createEl("h2", { text: "Keep Bases View Settings" });
 
 		new obsidian.Setting(containerEl)
-			.setName("特定の.baseファイルパス")
-			.setDesc("コマンドパレットから直接開く.baseファイルのパスを入力してください。")
+			.setName("Specific .base file path")
+			.setDesc("Path to the .base file opened by the \"Open specific .base file\" command.")
 			.addText(text => text
 				.setPlaceholder("path/to/file.base")
 				.setValue(this.plugin.settings.specificBaseFilePath || "")
@@ -759,7 +759,7 @@ class BaseFileSuggester extends obsidian.FuzzySuggestModal {
 	constructor(app, files) {
 		super(app);
 		this.files = files;
-		this.setPlaceholder(".base ファイルを選択して開く");
+		this.setPlaceholder("Select a .base file to open");
 	}
 
 	getItems() {
@@ -797,11 +797,11 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 
 		this.addCommand({
 			id: "open-base-file-suggester",
-			name: "任意の.baseファイルを開く",
+			name: "Open a .base file",
 			callback: () => {
 				const files = this.app.vault.getFiles().filter(f => f.extension === "base");
 				if (files.length === 0) {
-					new obsidian.Notice(".base ファイルが見つかりません。");
+					new obsidian.Notice("No .base files found.");
 					return;
 				}
 				new BaseFileSuggester(this.app, files).open();
@@ -810,18 +810,18 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 
 		this.addCommand({
 			id: "open-specific-base-file",
-			name: "特定の.baseファイルを開く",
+			name: "Open specific .base file",
 			callback: () => {
 				const path = this.settings.specificBaseFilePath?.trim();
 				if (!path) {
-					new obsidian.Notice("設定画面で特定の.baseファイルパスが設定されていません。");
+					new obsidian.Notice("No specific .base file path configured in settings.");
 					return;
 				}
 				const file = this.app.vault.getAbstractFileByPath(path);
 				if (file instanceof obsidian.TFile) {
 					this.app.workspace.getLeaf(false).openFile(file);
 				} else {
-					new obsidian.Notice(`ファイルが見つかりません: "${path}"`);
+					new obsidian.Notice(`File not found: "${path}"`);
 				}
 			}
 		});
