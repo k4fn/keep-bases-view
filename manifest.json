@@ -3,7 +3,7 @@
 	"name": "Keep Bases View",
 	"version": "1.0.0",
 	"minAppVersion": "1.10.2",
-	"description": "Google Keep-style masonry grid layout for Obsidian Bases.",
+	"description": "Google Keep-style masonry grid layout for Bases.",
 	"author": "k4fn",
 	"isDesktopOnly": false
 }

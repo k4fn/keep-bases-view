@@ -45,7 +45,7 @@
 
 /* ── Masonry Grid (CSS columns) ────────────────────────────── */
 /* JS (_updateGridWidth) がカラム数を計算して --kg-columns をセットする */
-.kg-grid {
+.kg-grid.kg-grid {
 	columns: var(--kg-columns, 3);
 	column-gap: 12px;
 }
@@ -228,7 +228,7 @@
 }
 
 /* ── Body preview (rendered Markdown) ─────────────────────── */
-.kg-card-body {
+.kg-card-body.kg-card-body {
 	font-size: 13px;
 	color: var(--text-muted);
 	line-height: 1.5;
@@ -243,61 +243,61 @@
 }
 
 /* Paragraphs */
-.kg-card-body p {
+.kg-card-body.kg-card-body p {
 	margin: 0 0 4px 0;
 	font-size: 13px;
 }
 
-.kg-card-body p:last-child {
+.kg-card-body.kg-card-body p:last-child {
 	margin-bottom: 0;
 }
 
 /* Headings — compact */
-.kg-card-body h1,
-.kg-card-body h2,
-.kg-card-body h3,
-.kg-card-body h4,
-.kg-card-body h5,
-.kg-card-body h6 {
+.kg-card-body.kg-card-body h1,
+.kg-card-body.kg-card-body h2,
+.kg-card-body.kg-card-body h3,
+.kg-card-body.kg-card-body h4,
+.kg-card-body.kg-card-body h5,
+.kg-card-body.kg-card-body h6 {
 	font-size: 13px;
 	font-weight: 600;
 	margin: 2px 0;
 	color: var(--text-normal);
 }
 
-/* Lists — override Obsidian defaults with !important */
-.kg-card-body ul,
-.kg-card-body ol {
-	margin: 0 0 4px 0 !important;
-	padding-left: 0 !important;
+/* Lists — override Obsidian defaults with */
+.kg-card-body.kg-card-body ul,
+.kg-card-body.kg-card-body ol {
+	margin: 0 0 4px 0;
+	padding-left: 0;
 }
 
-.kg-card-body li {
+.kg-card-body.kg-card-body li {
 	font-size: 13px;
 	margin: 1px 0;
 }
 
 /* Checkboxes (task list) */
-.kg-card-body ul.contains-task-list {
-	padding-left: 4px !important;
+.kg-card-body.kg-card-body ul.contains-task-list {
+	padding-left: 4px;
 }
 
-.kg-card-body ul.contains-task-list ul,
-.kg-card-body ul.contains-task-list ol {
-	padding-left: 0 !important;
-	padding-inline-start: 0 !important;
-	margin-left: 0 !important;
+.kg-card-body.kg-card-body ul.contains-task-list ul,
+.kg-card-body.kg-card-body ul.contains-task-list ol {
+	padding-left: 0;
+	padding-inline-start: 0;
+	margin-left: 0;
 }
 
-.kg-card-body .task-list-item {
+.kg-card-body.kg-card-body .task-list-item {
 	list-style: none;
 }
 
-.kg-card-body input[type="checkbox"],
-.kg-card-body .task-list-item-checkbox {
-	display: inline-block !important;
-	opacity: 1 !important;
-	visibility: visible !important;
+.kg-card-body.kg-card-body input[type="checkbox"],
+.kg-card-body.kg-card-body .task-list-item-checkbox {
+	display: inline-block;
+	opacity: 1;
+	visibility: visible;
 	margin-right: 5px;
 	vertical-align: middle;
 	cursor: default;
@@ -305,13 +305,13 @@
 }
 
 /* iframes (hatena embed, YouTube, etc.) — hide entirely in card preview */
-.kg-card-body iframe {
-	display: none !important;
+.kg-card-body.kg-card-body iframe {
+	display: none;
 }
 
 /* Tables */
-.kg-card-body table {
-	font-size: 13px !important;
+.kg-card-body.kg-card-body table {
+	font-size: 13px;
 	border-collapse: collapse;
 	width: 100%;
 	margin: 4px 0;
@@ -321,120 +321,120 @@
 	max-height: 120px;
 }
 
-.kg-card-body th,
-.kg-card-body td {
+.kg-card-body.kg-card-body th,
+.kg-card-body.kg-card-body td {
 	border: 1px solid var(--background-modifier-border);
-	padding: 2px 6px !important;
+	padding: 2px 6px;
 	white-space: nowrap;
-	font-size: 13px !important;
+	font-size: 13px;
 }
 
-.kg-card-body th {
+.kg-card-body.kg-card-body th {
 	background: transparent;
 	font-weight: 600;
 }
 
-.kg-card-body tr:nth-child(even) th,
-.kg-card-body tr:nth-child(even) td {
+.kg-card-body.kg-card-body tr:nth-child(even) th,
+.kg-card-body.kg-card-body tr:nth-child(even) td {
 	background: transparent;
 }
 
 
 /* Embedded notes & external link cards — force compact */
-.kg-card-body:not(.kg-card-body-base) .internal-embed,
-.kg-card-body:not(.kg-card-body-base) .markdown-embed,
-.kg-card-body .auto-card-link,
-.kg-card-body .rich-link-card,
-.kg-card-body .obsidian-card-link,
-.kg-card-body [class*="card-link"],
-.kg-card-body [class*="link-card"],
-.kg-card-body [class*="link-embed"],
-.kg-card-body [class*="embed-card"] {
-	max-height: 28px !important;
-	overflow: hidden !important;
-	border: 1px solid var(--background-modifier-border) !important;
-	border-radius: 4px !important;
-	margin: 3px 0 !important;
-	font-size: 11px !important;
-	padding: 4px 8px !important;
-	color: var(--text-muted) !important;
-	background: var(--background-secondary) !important;
-	box-shadow: none !important;
+.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .internal-embed,
+.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed,
+.kg-card-body.kg-card-body .auto-card-link,
+.kg-card-body.kg-card-body .rich-link-card,
+.kg-card-body.kg-card-body .obsidian-card-link,
+.kg-card-body.kg-card-body [class*="card-link"],
+.kg-card-body.kg-card-body [class*="link-card"],
+.kg-card-body.kg-card-body [class*="link-embed"],
+.kg-card-body.kg-card-body [class*="embed-card"] {
+	max-height: 28px;
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	margin: 3px 0;
+	font-size: 11px;
+	padding: 4px 8px;
+	color: var(--text-muted);
+	background: var(--background-secondary);
+	box-shadow: none;
 }
 
 /* Hide inner content of embeds, keep only first text line visible */
-.kg-card-body:not(.kg-card-body-base) .markdown-embed-content,
-.kg-card-body:not(.kg-card-body-base) .markdown-embed .markdown-preview-view,
-.kg-card-body .auto-card-link-thumbnail,
-.kg-card-body [class*="card-link"] img,
-.kg-card-body [class*="link-card"] img {
-	display: none !important;
+.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed-content,
+.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed .markdown-preview-view,
+.kg-card-body.kg-card-body .auto-card-link-thumbnail,
+.kg-card-body.kg-card-body [class*="card-link"] img,
+.kg-card-body.kg-card-body [class*="link-card"] img {
+	display: none;
 }
 
-.kg-card-body .markdown-embed-title {
-	font-size: 11px !important;
+.kg-card-body.kg-card-body .markdown-embed-title {
+	font-size: 11px;
 	margin: 0;
 }
 
 /* Allow .base embeds to display properly */
-.kg-card-body-base .internal-embed {
-	border: none !important;
-	background: transparent !important;
-	padding: 0 !important;
-	margin: 0 !important;
-	max-height: none !important;
-	display: block !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed {
+	border: none;
+	background: transparent;
+	padding: 0;
+	margin: 0;
+	max-height: none;
+	display: block;
 	height: var(--kg-base-preview-height, 150px); /* 高さを完全に固定してガタつきを完全に防止する */
 	overflow: hidden;
 }
 
-.kg-card-body-base .markdown-embed-title {
-	display: none !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .markdown-embed-title {
+	display: none;
 }
 
-.kg-card-body-base .markdown-embed-content {
-	display: block !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .markdown-embed-content {
+	display: block;
 }
 
 /* Hide the Bases toolbar (keep only the table) */
-.kg-card-body-base .bases-header {
-	display: none !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .bases-header {
+	display: none;
 }
 
 /* Force table CSS variables to transparent */
-.kg-card-body-base .internal-embed {
-	--table-header-bg: transparent !important;
-	--table-row-alt-bg: transparent !important;
-	--table-row-hover-bg: transparent !important;
-	--table-row-background: transparent !important;
-	--table-cell-background: transparent !important;
-	background-color: transparent !important;
-	background: transparent !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed {
+	--table-header-bg: transparent;
+	--table-row-alt-bg: transparent;
+	--table-row-hover-bg: transparent;
+	--table-row-background: transparent;
+	--table-cell-background: transparent;
+	background-color: transparent;
+	background: transparent;
 }
 
 /* Make ALL elements inside the base embed transparent so they take the card's color. */
-.kg-card-body-base .internal-embed * {
-	background-color: transparent !important;
-	background: transparent !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed * {
+	background-color: transparent;
+	background: transparent;
 }
 
-.kg-card-body-base table,
-.kg-card-body-base th,
-.kg-card-body-base td,
-.kg-card-body-base tr {
-	background-color: transparent !important;
-	background: transparent !important;
+.kg-card-body.kg-card-body-base.kg-card-body-base table,
+.kg-card-body.kg-card-body-base.kg-card-body-base th,
+.kg-card-body.kg-card-body-base.kg-card-body-base td,
+.kg-card-body.kg-card-body-base.kg-card-body-base tr {
+	background-color: transparent;
+	background: transparent;
 }
 
 /* ライトテーマ: 白背景を視覚的に透かす（乗算ブレンド） */
-.theme-light .kg-card-body-base .internal-embed,
-.theme-light .kg-card-body-base .internal-embed * {
+.theme-light .kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed,
+.theme-light .kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed * {
 	mix-blend-mode: multiply;
 }
 
 
 /* Code blocks */
-.kg-card-body pre {
+.kg-card-body.kg-card-body pre {
 	font-size: 11px;
 	padding: 6px 8px;
 	border-radius: 4px;
@@ -444,12 +444,12 @@
 	max-height: 120px;
 }
 
-.kg-card-body code {
+.kg-card-body.kg-card-body code {
 	font-size: 11px;
 }
 
 /* Blockquotes */
-.kg-card-body blockquote {
+.kg-card-body.kg-card-body blockquote {
 	border-left: 3px solid var(--background-modifier-border);
 	padding-left: 8px;
 	margin: 4px 0;
@@ -457,19 +457,19 @@
 }
 
 /* Callouts */
-.kg-card-body .callout {
+.kg-card-body.kg-card-body .callout {
 	padding: 4px 8px;
 	border-radius: 4px;
 	font-size: 12px;
 	margin: 4px 0;
 }
 
-.kg-card-body .callout-content {
+.kg-card-body.kg-card-body .callout-content {
 	font-size: 12px;
 }
 
 /* Images inside body */
-.kg-card-body img {
+.kg-card-body.kg-card-body img {
 	max-width: 100%;
 	border-radius: 4px;
 	margin: 4px 0;
@@ -537,8 +537,8 @@
 /* column-width を使っているため、コンテナ幅が狭い場合もカラム数は自動で減少する */
 /* 最小幅を下回ったら 1 カラムになるよう max-width を指定して保険をかける */
 @container (max-width: 300px) {
-	.kg-grid {
-		columns: 1 !important;
+	.kg-grid.kg-grid {
+		columns: 1;
 	}
 }
 
@@ -607,13 +607,13 @@
 }
 
 /* Selected swatch — with checkmark ring */
-.kg-color-swatch-active {
-	border-color: rgba(0, 0, 0, 0.5) !important;
+.kg-color-swatch-active.kg-color-swatch-active {
+	border-color: rgba(0, 0, 0, 0.5);
 	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
 }
 
-.theme-dark .kg-color-swatch-active {
-	border-color: rgba(255, 255, 255, 0.7) !important;
+.theme-dark .kg-color-swatch-active.kg-color-swatch-active {
+	border-color: rgba(255, 255, 255, 0.7);
 	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
@@ -639,12 +639,12 @@
 }
 
 /* Default (no color) swatch */
-.kg-color-swatch-default {
+.kg-color-swatch-default.kg-color-swatch-default {
 	background: var(--background-primary);
-	border-color: var(--background-modifier-border) !important;
+	border-color: var(--background-modifier-border);
 }
 
-.kg-color-swatch-default::before {
+.kg-color-swatch-default.kg-color-swatch-default::before {
 	content: "";
 	position: absolute;
 	inset: 2px;
@@ -662,6 +662,6 @@
 }
 
 /* When default swatch is selected, checkmark color adapts */
-.kg-color-swatch-default .kg-color-check .svg-icon {
+.kg-color-swatch-default.kg-color-swatch-default .kg-color-check .svg-icon {
 	color: var(--text-normal);
 }
