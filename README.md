@@ -2,6 +2,8 @@
 
 ObsidianのBasesプラグインを拡張し、Google KeepのようなMasonry（レンガ積み）グリッドレイアウトでノートを表示するためのカスタムビュープラグインです。
 
+<img src="https://github.com/user-attachments/assets/eb923fe2-584f-4f63-a0d5-799eb5ce2333" />
+
 ## 主な機能
 
 - **Google Keep風グリッドレイアウト**: ノートをタイル状に並べ、画面幅に応じて自動的に列数が変わるレスポンシブなデザインを提供します。
