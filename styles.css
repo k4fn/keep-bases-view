@@ -1,0 +1,667 @@
+/* ============================================================
+   Keep Grid Bases View — styles.css
+   Google Keep-inspired masonry grid layout for Obsidian Bases
+   ============================================================ */
+
+/* ── Container ─────────────────────────────────────────────── */
+.kg-container {
+	padding: 16px;
+	height: 100%;
+	overflow-y: auto;
+	box-sizing: border-box;
+}
+
+/* ── Empty state ───────────────────────────────────────────── */
+.kg-empty {
+	padding: 60px 20px;
+	text-align: center;
+	color: var(--text-faint);
+	font-style: italic;
+	font-size: 14px;
+}
+
+/* ── Section labels (PINNED / OTHERS) ─────────────────────── */
+.kg-section {
+	margin-bottom: 8px;
+}
+
+.kg-section + .kg-section {
+	margin-top: 32px;
+}
+
+.kg-section-label {
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	color: var(--text-muted);
+	padding: 0 4px 6px 4px;
+}
+
+.kg-divider {
+	height: 1px;
+	background: var(--background-modifier-border);
+	margin: 12px 0 16px 0;
+}
+
+/* ── Masonry Grid (CSS columns) ────────────────────────────── */
+/* JS (_updateGridWidth) がカラム数を計算して --kg-columns をセットする */
+.kg-grid {
+	columns: var(--kg-columns, 3);
+	column-gap: 12px;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+.kg-card {
+	break-inside: avoid;
+	display: block;
+	margin-bottom: 12px;
+	background: var(--kg-card-bg, var(--background-primary));
+	border: 1px solid var(--kg-card-border, var(--background-modifier-border));
+	border-radius: 8px;
+	padding: 12px;
+	cursor: pointer;
+	position: relative;
+	transition:
+		box-shadow 0.15s ease,
+		border-color 0.15s ease,
+		transform 0.15s ease,
+		background-color 0.15s ease;
+	box-sizing: border-box;
+	overflow: hidden;
+}
+
+.kg-card:hover {
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+	border-color: var(--background-modifier-border-hover);
+	transform: translateY(-1px);
+}
+
+/* ── Card Colors ───────────────────────────────────────────────────────────── */
+.kg-card[data-keep-color="red"] { --kg-card-bg: color-mix(in srgb, var(--color-red) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-red) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="orange"] { --kg-card-bg: color-mix(in srgb, var(--color-orange) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-orange) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="yellow"] { --kg-card-bg: color-mix(in srgb, var(--color-yellow) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-yellow) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="green"] { --kg-card-bg: color-mix(in srgb, var(--color-green) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-green) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="cyan"] { --kg-card-bg: color-mix(in srgb, var(--color-cyan) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-cyan) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="blue"] { --kg-card-bg: color-mix(in srgb, var(--color-blue) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-blue) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="purple"] { --kg-card-bg: color-mix(in srgb, var(--color-purple) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-purple) 30%, var(--background-modifier-border)); }
+.kg-card[data-keep-color="pink"] { --kg-card-bg: color-mix(in srgb, var(--color-pink) 15%, var(--background-primary)); --kg-card-border: color-mix(in srgb, var(--color-pink) 30%, var(--background-modifier-border)); }
+
+
+/* ── Pin icon ──────────────────────────────────────────────── */
+.kg-card-pin {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 18px;
+	height: 18px;
+	opacity: 0.55;
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.kg-card-pin .svg-icon {
+	width: 14px;
+	height: 14px;
+}
+
+/* ── Hover actions (PC only) ───────────────────────────────── */
+@media (hover: hover) and (pointer: fine) {
+
+	/* Pin button (Top Right) */
+	.kg-pin-btn {
+		position: absolute;
+		top: 8px;
+		right: 8px;
+		z-index: 10;
+		background: var(--background-primary);
+		border: 1px solid var(--background-modifier-border);
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+		border-radius: 50%;
+		padding: 6px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		color: var(--text-muted);
+		opacity: 0;
+		transition: opacity 0.15s ease-in-out, background-color 0.1s;
+	}
+
+	.kg-pin-btn.is-pinned {
+		opacity: 0.6;
+	}
+
+	.kg-card:hover .kg-pin-btn {
+		opacity: 1;
+	}
+
+	.kg-pin-btn:hover {
+		color: var(--text-normal);
+		background-color: var(--background-modifier-hover);
+	}
+
+	.kg-pin-btn .svg-icon {
+		width: 14px;
+		height: 14px;
+	}
+
+	/* Delete action container (Bottom Right) */
+	.kg-card-actions {
+		position: absolute;
+		bottom: 8px;
+		right: 8px;
+		display: flex;
+		gap: 6px;
+		opacity: 0;
+		transition: opacity 0.15s ease-in-out;
+		z-index: 10;
+		background: var(--background-primary);
+		border-radius: 4px;
+		padding: 2px;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+	}
+
+	.kg-card:hover .kg-card-actions {
+		opacity: 1;
+	}
+
+	.kg-action-btn {
+		background: transparent;
+		box-shadow: none;
+		border: none;
+		cursor: pointer;
+		color: var(--text-muted);
+		padding: 4px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 4px;
+	}
+
+	.kg-action-btn:hover {
+		color: var(--text-normal);
+		background-color: var(--background-modifier-hover);
+	}
+
+	.kg-action-btn .svg-icon {
+		width: 14px;
+		height: 14px;
+	}
+}
+
+/* ── Cover image ───────────────────────────────────────────── */
+.kg-card-cover {
+	display: block;
+	width: calc(100% + 24px);
+	margin: -12px -12px 10px -12px;
+	border-radius: 8px 8px 0 0;
+	overflow: hidden;
+	max-height: 200px;
+}
+
+.kg-card-cover img {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.kg-card-cover--cover img {
+	object-fit: cover;
+}
+
+.kg-card-cover--contain img {
+	object-fit: contain;
+	background: var(--background-secondary);
+	max-height: 160px;
+}
+
+/* ── Title ─────────────────────────────────────────────────── */
+.kg-card-title {
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-normal);
+	line-height: 1.4;
+	margin-bottom: 4px;
+	word-break: break-word;
+}
+
+/* ── Body preview (rendered Markdown) ─────────────────────── */
+.kg-card-body {
+	font-size: 13px;
+	color: var(--text-muted);
+	line-height: 1.5;
+	margin-top: 6px;
+	/* max-heightの代わりにline-clampで行数を制限し、末尾に「...」を表示する */
+	display: -webkit-box;
+	-webkit-line-clamp: var(--kg-card-max-lines, 16);
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	position: relative;
+	word-break: break-word;
+}
+
+/* Paragraphs */
+.kg-card-body p {
+	margin: 0 0 4px 0;
+	font-size: 13px;
+}
+
+.kg-card-body p:last-child {
+	margin-bottom: 0;
+}
+
+/* Headings — compact */
+.kg-card-body h1,
+.kg-card-body h2,
+.kg-card-body h3,
+.kg-card-body h4,
+.kg-card-body h5,
+.kg-card-body h6 {
+	font-size: 13px;
+	font-weight: 600;
+	margin: 2px 0;
+	color: var(--text-normal);
+}
+
+/* Lists — override Obsidian defaults with !important */
+.kg-card-body ul,
+.kg-card-body ol {
+	margin: 0 0 4px 0 !important;
+	padding-left: 0 !important;
+}
+
+.kg-card-body li {
+	font-size: 13px;
+	margin: 1px 0;
+}
+
+/* Checkboxes (task list) */
+.kg-card-body ul.contains-task-list {
+	padding-left: 4px !important;
+}
+
+.kg-card-body ul.contains-task-list ul,
+.kg-card-body ul.contains-task-list ol {
+	padding-left: 0 !important;
+	padding-inline-start: 0 !important;
+	margin-left: 0 !important;
+}
+
+.kg-card-body .task-list-item {
+	list-style: none;
+}
+
+.kg-card-body input[type="checkbox"],
+.kg-card-body .task-list-item-checkbox {
+	display: inline-block !important;
+	opacity: 1 !important;
+	visibility: visible !important;
+	margin-right: 5px;
+	vertical-align: middle;
+	cursor: default;
+	pointer-events: none;
+}
+
+/* iframes (hatena embed, YouTube, etc.) — hide entirely in card preview */
+.kg-card-body iframe {
+	display: none !important;
+}
+
+/* Tables */
+.kg-card-body table {
+	font-size: 13px !important;
+	border-collapse: collapse;
+	width: 100%;
+	margin: 4px 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	display: block;
+	max-height: 120px;
+}
+
+.kg-card-body th,
+.kg-card-body td {
+	border: 1px solid var(--background-modifier-border);
+	padding: 2px 6px !important;
+	white-space: nowrap;
+	font-size: 13px !important;
+}
+
+.kg-card-body th {
+	background: transparent;
+	font-weight: 600;
+}
+
+.kg-card-body tr:nth-child(even) th,
+.kg-card-body tr:nth-child(even) td {
+	background: transparent;
+}
+
+
+/* Embedded notes & external link cards — force compact */
+.kg-card-body:not(.kg-card-body-base) .internal-embed,
+.kg-card-body:not(.kg-card-body-base) .markdown-embed,
+.kg-card-body .auto-card-link,
+.kg-card-body .rich-link-card,
+.kg-card-body .obsidian-card-link,
+.kg-card-body [class*="card-link"],
+.kg-card-body [class*="link-card"],
+.kg-card-body [class*="link-embed"],
+.kg-card-body [class*="embed-card"] {
+	max-height: 28px !important;
+	overflow: hidden !important;
+	border: 1px solid var(--background-modifier-border) !important;
+	border-radius: 4px !important;
+	margin: 3px 0 !important;
+	font-size: 11px !important;
+	padding: 4px 8px !important;
+	color: var(--text-muted) !important;
+	background: var(--background-secondary) !important;
+	box-shadow: none !important;
+}
+
+/* Hide inner content of embeds, keep only first text line visible */
+.kg-card-body:not(.kg-card-body-base) .markdown-embed-content,
+.kg-card-body:not(.kg-card-body-base) .markdown-embed .markdown-preview-view,
+.kg-card-body .auto-card-link-thumbnail,
+.kg-card-body [class*="card-link"] img,
+.kg-card-body [class*="link-card"] img {
+	display: none !important;
+}
+
+.kg-card-body .markdown-embed-title {
+	font-size: 11px !important;
+	margin: 0;
+}
+
+/* Allow .base embeds to display properly */
+.kg-card-body-base .internal-embed {
+	border: none !important;
+	background: transparent !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	max-height: none !important;
+	display: block !important;
+	height: var(--kg-base-preview-height, 150px); /* 高さを完全に固定してガタつきを完全に防止する */
+	overflow: hidden;
+}
+
+.kg-card-body-base .markdown-embed-title {
+	display: none !important;
+}
+
+.kg-card-body-base .markdown-embed-content {
+	display: block !important;
+}
+
+/* Hide the Bases toolbar (keep only the table) */
+.kg-card-body-base .bases-header {
+	display: none !important;
+}
+
+/* Force table CSS variables to transparent */
+.kg-card-body-base .internal-embed {
+	--table-header-bg: transparent !important;
+	--table-row-alt-bg: transparent !important;
+	--table-row-hover-bg: transparent !important;
+	--table-row-background: transparent !important;
+	--table-cell-background: transparent !important;
+	background-color: transparent !important;
+	background: transparent !important;
+}
+
+/* Make ALL elements inside the base embed transparent so they take the card's color. */
+.kg-card-body-base .internal-embed * {
+	background-color: transparent !important;
+	background: transparent !important;
+}
+
+.kg-card-body-base table,
+.kg-card-body-base th,
+.kg-card-body-base td,
+.kg-card-body-base tr {
+	background-color: transparent !important;
+	background: transparent !important;
+}
+
+/* ライトテーマ: 白背景を視覚的に透かす（乗算ブレンド） */
+.theme-light .kg-card-body-base .internal-embed,
+.theme-light .kg-card-body-base .internal-embed * {
+	mix-blend-mode: multiply;
+}
+
+
+/* Code blocks */
+.kg-card-body pre {
+	font-size: 11px;
+	padding: 6px 8px;
+	border-radius: 4px;
+	margin: 4px 0;
+	background: var(--background-secondary);
+	overflow-x: auto;
+	max-height: 120px;
+}
+
+.kg-card-body code {
+	font-size: 11px;
+}
+
+/* Blockquotes */
+.kg-card-body blockquote {
+	border-left: 3px solid var(--background-modifier-border);
+	padding-left: 8px;
+	margin: 4px 0;
+	color: var(--text-faint);
+}
+
+/* Callouts */
+.kg-card-body .callout {
+	padding: 4px 8px;
+	border-radius: 4px;
+	font-size: 12px;
+	margin: 4px 0;
+}
+
+.kg-card-body .callout-content {
+	font-size: 12px;
+}
+
+/* Images inside body */
+.kg-card-body img {
+	max-width: 100%;
+	border-radius: 4px;
+	margin: 4px 0;
+}
+
+
+/* ── Selected properties ───────────────────────────────────── */
+.kg-card-props {
+	margin-top: 8px;
+	padding: 6px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background-color: var(--background-primary-alt);
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.kg-prop {
+	display: flex;
+	gap: 5px;
+	font-size: 13px;
+	line-height: 1.4;
+	overflow: hidden;
+}
+
+.kg-prop-label {
+	color: var(--text-muted);
+	flex-shrink: 0;
+	white-space: nowrap;
+}
+
+.kg-prop-label::after {
+	content: ":";
+}
+
+.kg-prop-value {
+	color: var(--text-normal);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── Tags ──────────────────────────────────────────────────── */
+.kg-card-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin-top: 10px;
+}
+
+.kg-tag {
+	font-size: 11px;
+	padding: 2px 8px;
+	border-radius: 12px;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	white-space: nowrap;
+	max-width: 120px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ── Responsive: narrow pane ───────────────────────────────── */
+/* column-width を使っているため、コンテナ幅が狭い場合もカラム数は自動で減少する */
+/* 最小幅を下回ったら 1 カラムになるよう max-width を指定して保険をかける */
+@container (max-width: 300px) {
+	.kg-grid {
+		columns: 1 !important;
+	}
+}
+
+/* ── Touch devices ─────────────────────────────────────────── */
+@media (any-pointer: coarse) and (hover: none) {
+	.kg-card {
+		user-select: none;
+		-webkit-user-select: none;
+	}
+}
+
+/* ── Google Keep–style color palette popup ─────────────────── */
+.kg-color-palette {
+	position: fixed;
+	z-index: 9999;
+	display: flex;
+	flex-direction: row;
+	gap: 4px;
+	padding: 8px 10px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 32px;
+	box-shadow:
+		0 1px 3px rgba(0, 0, 0, 0.12),
+		0 4px 16px rgba(0, 0, 0, 0.18);
+	animation: kg-palette-pop 0.12s ease;
+}
+
+@keyframes kg-palette-pop {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.kg-color-swatch {
+	width: 24px;
+	height: 24px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	cursor: pointer;
+	padding: 0;
+	flex-shrink: 0;
+	transition:
+		transform 0.12s ease,
+		border-color 0.12s ease,
+		box-shadow 0.12s ease;
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.kg-color-swatch:hover {
+	transform: scale(1.15);
+	border-color: rgba(0, 0, 0, 0.25);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.theme-dark .kg-color-swatch:hover {
+	border-color: rgba(255, 255, 255, 0.35);
+}
+
+/* Selected swatch — with checkmark ring */
+.kg-color-swatch-active {
+	border-color: rgba(0, 0, 0, 0.5) !important;
+	box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+
+.theme-dark .kg-color-swatch-active {
+	border-color: rgba(255, 255, 255, 0.7) !important;
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+/* Checkmark icon inside selected swatch */
+.kg-color-check {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+
+.kg-color-check .svg-icon {
+	width: 14px;
+	height: 14px;
+	color: rgba(0, 0, 0, 0.7);
+	stroke-width: 2.5px;
+}
+
+.theme-dark .kg-color-check .svg-icon {
+	color: rgba(255, 255, 255, 0.9);
+}
+
+/* Default (no color) swatch */
+.kg-color-swatch-default {
+	background: var(--background-primary);
+	border-color: var(--background-modifier-border) !important;
+}
+
+.kg-color-swatch-default::before {
+	content: "";
+	position: absolute;
+	inset: 2px;
+	border-radius: 50%;
+	background:
+		linear-gradient(
+			-45deg,
+			transparent calc(50% - 1.5px),
+			#e57373 calc(50% - 1.5px),
+			#e57373 calc(50% + 1.5px),
+			transparent calc(50% + 1.5px)
+		),
+		var(--background-secondary);
+	pointer-events: none;
+}
+
+/* When default swatch is selected, checkmark color adapts */
+.kg-color-swatch-default .kg-color-check .svg-icon {
+	color: var(--text-normal);
+}
