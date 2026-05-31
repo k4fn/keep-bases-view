@@ -8,7 +8,7 @@ A custom [Bases](https://obsidian.md/ja/help/bases) view plugin for Obsidian tha
 
 1. Enable the **Bases** plugin in Obsidian.
 2. Open a `.base` file and switch the view type to **Keep Bases View**.
-3. Use the ⚙ gear icon to configure the view options.
+3. Use the > icon to configure the view options.
 
 ## Features
 
@@ -24,7 +24,7 @@ A custom [Bases](https://obsidian.md/ja/help/bases) view plugin for Obsidian tha
 
 ## View Options
 
-Configure these from the ⚙ gear icon in the Bases view:
+Configure these from the > icon in the Bases view:
 
 - **Card title property** — Property to use as the card title (default: file name)
 - **Cover image property** — Property containing the cover image
