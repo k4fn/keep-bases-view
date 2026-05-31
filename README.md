@@ -1,38 +1,59 @@
 # Keep Bases View
 
-ObsidianのBasesプラグインを拡張し、Google KeepのようなMasonry（レンガ積み）グリッドレイアウトでノートを表示するためのカスタムビュープラグインです。
+A custom [Bases](https://obsidian.md/ja/help/bases) view plugin for Obsidian that displays your notes in a Google Keep-style masonry grid.
 
-<img src="https://github.com/user-attachments/assets/eb923fe2-584f-4f63-a0d5-799eb5ce2333" />
+![Keep Bases View screenshot](https://github.com/user-attachments/assets/eb923fe2-584f-4f63-a0d5-799eb5ce2333)
 
-## 主な機能
+## Getting Started
 
-- **Google Keep風グリッドレイアウト**: ノートをタイル状に並べ、画面幅に応じて自動的に列数が変わるレスポンシブなデザインを提供します。
-- **デバイス別のカード幅設定**: PC、タブレット、スマホのそれぞれで異なるカード幅を設定できます。画面サイズに応じて最適な表示が可能です。
-- **ピン留め機能**: 重要なノートを上部（「固定済み」セクション）に固定表示できます。PCではカード右上のピンアイコン、スマホでは長押しメニューから操作可能です。（フロントマターの `keep_pinned: true` と連動します）
-- **カードのカラー変更**: Google Keepのように、ノートごとにカードの背景色を変更できます。PCではパレットアイコン、スマホでは長押しメニューから変更可能です。（フロントマターの `keep_color` と連動します）
-- **`.base` ファイルのインラインプレビュー**: グリッド内で別の `.base` ファイルの中身をプレビュー表示できます。
-- **クイックコマンド機能**: コマンドパレットから、任意の `.base` ファイルを開いたり、あらかじめ設定した特定の `.base` ファイルを即座に開くことができます。
+1. Enable the **Bases** plugin in Obsidian.
+2. Open a `.base` file and switch the view type to **Keep Bases View**.
+3. Use the ⚙ gear icon to configure the view options.
 
-## 使い方
+## Features
 
-1. Obsidianで Bases プラグインが有効になっていることを確認します。
-2. Basesのビュー設定画面を開き、View Typeとして `Keep Bases View` を選択します。
-3. ビュー右上の歯車アイコン（オプション）から、表示するプロパティやデバイスごとのカード幅、画像のフィット方法などを設定します。
+| Feature | Description |
+|---------|-------------|
+| **Masonry grid** | Responsive card layout, columns auto-adjust as the panel resizes |
+| **Pin notes** | Pin important notes to the top. Synced with `keep_pinned` frontmatter |
+| **Card colors** | Color-code notes like Google Keep. Synced with `keep_color` frontmatter |
+| **Cover images** | Display a cover image from any note property |
+| **Body preview** | Shows a markdown preview of each note's body text |
+| **.base preview** | Embed another `.base` file's table directly in a card |
+| **Context menu** | Right-click (desktop) or long-press (mobile) for quick actions |
 
-## オプション設定一覧
+## View Options
 
-Basesビュー右上の歯車アイコンから以下の設定が可能です：
+Configure these from the ⚙ gear icon in the Bases view:
 
-- **カードタイトルのプロパティ**: カードのタイトルとして表示するプロパティを指定します（デフォルトはファイル名）。
-- **画像プロパティ**: カバー画像として表示するプロパティを指定します。
-- **画像の表示方法**: カバー画像を「枠に合わせて切り抜き (Cover)」か「画像全体を表示 (Contain)」から選択します。
-- **カード幅**: PC、タブレット、スマホそれぞれでのカード幅（px）を設定します。
-- **タグを表示する**: カード内にタグを表示するかどうかを切り替えます。
-- **ピン留めしたノートを上部に表示**: ピン留めされたノートを「固定済み」セクションとして一番上に表示します。
-- **プレビュー関連**: `.base` ファイルのプレビュー表示のオンオフや、最大高さの制限を設定できます。
+- **Card title property** — Property to use as the card title (default: file name)
+- **Cover image property** — Property containing the cover image
+- **Image fit** — Crop to fill (Cover) or show full image (Contain)
+- **Card width** — Separate width settings for Desktop / Tablet / Mobile
+- **Show tags** — Toggle tag display on cards
+- **Pin important notes to the top** — Shows pinned notes in a separate "Pinned" section
+- **Preview .base file contents** — Toggle inline `.base` table preview
+- **Card preview max height** — Maximum height of the body preview area
+- **.base embed fixed height** — Fixed height for embedded `.base` previews
 
-## プラグイン設定
+## Plugin Settings
 
-Obsidian本体の設定 ＞ Community Plugins ＞ `Keep Bases View` から以下の設定が行えます。
+**Settings → Community Plugins → Keep Bases View**
 
-- **特定の.baseファイルパス**: 「特定の.baseファイルを開く」コマンドを実行した際に開かれる対象ファイルのパスを設定します。
+- **Specific .base file path** — Path used by the "Open specific .base file" command
+
+## Context Menu
+
+Right-click a card on desktop (or long-press on mobile) to access these actions:
+
+| Action | Description |
+|--------|-------------|
+| **Open in new tab** | Opens the note in a new Obsidian tab |
+| **Pin / Unpin** | Toggles the pin state (`keep_pinned` frontmatter) |
+| **Change color** | Opens a color palette to set the card color (`keep_color` frontmatter) |
+| **Delete** | Moves the note to the trash (with a confirmation prompt) |
+
+## Commands
+
+- **Open a .base file** — Fuzzy search and open any `.base` file in the vault
+- **Open specific .base file** — Instantly open the `.base` file set in Plugin Settings
