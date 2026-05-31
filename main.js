@@ -524,28 +524,35 @@ class KeepGridView extends obsidian.BasesView {
 			delBtn.addEventListener("click", (e) => { e.stopPropagation(); handleDelete(); });
 		}
 
-		// Context menu (Mobile / iPad long-press)
+		// Context menu (right-click on PC / long-press on Mobile)
 		cardEl.addEventListener("contextmenu", (e) => {
-			if (obsidian.Platform.isMobile) {
-				e.preventDefault();
-				const menu = new obsidian.Menu();
-				menu.addItem((item) => {
-					item.setTitle(isPinned ? "ピン留めを解除" : "ピン留め")
-						.setIcon(isPinned ? "pin-off" : "pin")
-						.onClick(handlePin);
-				});
-				menu.addItem((item) => {
-					item.setTitle("色を変更")
-						.setIcon("palette")
-						.onClick(() => handleColorChange(e));
-				});
-				menu.addItem((item) => {
-					item.setTitle("削除")
-						.setIcon("trash")
-						.onClick(handleDelete);
-				});
-				menu.showAtMouseEvent(e);
-			}
+			e.preventDefault();
+			const menu = new obsidian.Menu();
+			menu.addItem((item) => {
+				item.setTitle("新しいタブで開く")
+					.setIcon("file-plus")
+					.onClick(() => {
+						const leaf = this.app.workspace.getLeaf("tab");
+						void leaf.openFile(file);
+					});
+			});
+			menu.addSeparator();
+			menu.addItem((item) => {
+				item.setTitle(isPinned ? "ピン留めを解除" : "ピン留め")
+					.setIcon(isPinned ? "pin-off" : "pin")
+					.onClick(handlePin);
+			});
+			menu.addItem((item) => {
+				item.setTitle("色を変更")
+					.setIcon("palette")
+					.onClick(() => handleColorChange(e));
+			});
+			menu.addItem((item) => {
+				item.setTitle("削除")
+					.setIcon("trash")
+					.onClick(handleDelete);
+			});
+			menu.showAtMouseEvent(e);
 		});
 
 		cardEl.addEventListener("click", (e) => {
