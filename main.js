@@ -55,8 +55,9 @@ function resolveImageSrc(raw, filePath, app) {
 
 class KeepGridView extends obsidian.BasesView {
 
-	constructor(controller, scrollEl) {
+	constructor(controller, scrollEl, plugin) {
 		super(controller);
+		this.plugin      = plugin;
 		this.type        = KEEP_VIEW_TYPE;
 		this.hoverPopover = null;
 
@@ -712,8 +713,13 @@ class KeepGridView extends obsidian.BasesView {
 			if (!this.app?.workspace) return;
 			
 			const newLeaf = obsidian.Keymap.isModEvent(e);
-			const leaf = this.app.workspace.getLeaf(newLeaf);
-			void leaf.openFile(file);
+			
+			if (!newLeaf && this.plugin?.settings?.openInPopup !== false) {
+				new KeepEditModal(this.app, file, this.plugin).open();
+			} else {
+				const leaf = this.app.workspace.getLeaf(newLeaf);
+				void leaf.openFile(file);
+			}
 		});
 
 		cardEl.addEventListener("mouseover", (e) => {
@@ -968,6 +974,49 @@ class ConfirmModal extends obsidian.Modal {
 	}
 }
 
+class KeepEditModal extends obsidian.Modal {
+	constructor(app, file, plugin) {
+		super(app);
+		this.file = file;
+		this.plugin = plugin;
+		this.leaf = null;
+	}
+
+	async onOpen() {
+		const { contentEl } = this;
+		this.modalEl.addClass("kg-edit-modal");
+		const width = this.plugin?.settings?.popupWidth || 800;
+		this.modalEl.style.setProperty("max-width", `${width}px`, "important");
+		contentEl.empty();
+		
+		try {
+			// Extract the non-public WorkspaceLeaf constructor from the active leaf
+			const activeLeaf = this.app.workspace.getLeaf(false);
+			const WorkspaceLeaf = activeLeaf.constructor;
+
+			// Create a completely new, detached leaf
+			this.leaf = new WorkspaceLeaf(this.app);
+			
+			// Append the leaf's container to our modal's DOM
+			contentEl.appendChild(this.leaf.containerEl);
+			
+			// Open the file inside this leaf (gives us Live Preview, Properties, etc.)
+			await this.leaf.openFile(this.file);
+		} catch (err) {
+			console.error("[KeepBasesView] Failed to mount detached leaf:", err);
+			contentEl.createEl("p", { text: "Failed to load the standard editor." });
+		}
+	}
+
+	onClose() {
+		if (this.leaf) {
+			this.leaf.detach();
+			this.leaf = null;
+		}
+		this.contentEl.empty();
+	}
+}
+
 class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 	constructor(app, plugin) {
 		super(app, plugin);
@@ -988,6 +1037,30 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				.onChange(async (value) => {
 					this.plugin.settings.specificBaseFilePath = value.trim();
 					await this.plugin.saveSettings();
+				}));
+
+		new obsidian.Setting(containerEl)
+			.setName("Open in popup")
+			.setDesc("Open cards in a Google Keep-like popup modal for quick editing.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.openInPopup !== false)
+				.onChange(async (value) => {
+					this.plugin.settings.openInPopup = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new obsidian.Setting(containerEl)
+			.setName("Popup max width (px)")
+			.setDesc("Set the maximum width of the edit popup in pixels. Default is 800.")
+			.addText(text => text
+				.setPlaceholder("800")
+				.setValue(String(this.plugin.settings.popupWidth || 800))
+				.onChange(async (value) => {
+					const parsed = parseInt(value, 10);
+					if (!isNaN(parsed) && parsed > 0) {
+						this.plugin.settings.popupWidth = parsed;
+						await this.plugin.saveSettings();
+					}
 				}));
 	}
 }
@@ -1028,7 +1101,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 		this.registerBasesView(KEEP_VIEW_TYPE, {
 			name: "Keep Bases View",
 			icon: "layout-grid",
-			factory: (controller, scrollEl) => new KeepGridView(controller, scrollEl),
+			factory: (controller, scrollEl) => new KeepGridView(controller, scrollEl, this),
 			options: KeepGridView.getViewOptions,
 		});
 
@@ -1065,7 +1138,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, { specificBaseFilePath: "" }, await this.loadData());
+		this.settings = Object.assign({}, { specificBaseFilePath: "", openInPopup: true, popupWidth: 800 }, await this.loadData());
 	}
 
 	async saveSettings() {
