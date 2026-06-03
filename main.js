@@ -63,6 +63,17 @@ class KeepGridView extends obsidian.BasesView {
 		this._scrollEl    = scrollEl;
 		this._containerEl = scrollEl.createDiv({ cls: "kg-container" });
 
+		this._observer = new IntersectionObserver((entries) => {
+			for (const entry of entries) {
+				const cardEl = entry.target;
+				if (entry.isIntersecting) {
+					this._mountCard(cardEl);
+				} else {
+					this._unmountCard(cardEl);
+				}
+			}
+		}, { rootMargin: "2500px" });
+
 		// config values (populated in loadConfig)
 		this._imagePropertyId     = null;
 		this._cardTitlePropertyId = null;
@@ -74,6 +85,7 @@ class KeepGridView extends obsidian.BasesView {
 		this._showTags     = true;
 		this._showPinned   = true;
 		this._imageFit     = "cover";
+		this._lastWidth    = null; // キャッシュ用コンテナ幅
 
 		this._debouncedRender = obsidian.debounce(() => {
 			try {
@@ -84,8 +96,16 @@ class KeepGridView extends obsidian.BasesView {
 			}
 		}, DEBOUNCE_MS);
 
-		// ResizeObserver: コンテナ幅が変わったらグリッド幅を再計算
-		this._resizeObserver = new ResizeObserver(() => this._updateGridWidth());
+		// ResizeObserver: コンテナの実際の横幅が変わったときのみ再計算（リフロー削減）
+		this._resizeObserver = new ResizeObserver((entries) => {
+			for (const entry of entries) {
+				const width = entry.contentRect.width;
+				if (this._lastWidth === null || Math.abs(this._lastWidth - width) > 1) {
+					this._lastWidth = width;
+					this._updateGridWidth(width);
+				}
+			}
+		});
 		this._resizeObserver.observe(this._containerEl);
 	}
 
@@ -98,6 +118,10 @@ class KeepGridView extends obsidian.BasesView {
 	onClose() {
 		this._debouncedRender.cancel();
 		this._resizeObserver.disconnect();
+		this._observer.disconnect();
+		if (this._infiniteScrollObserver) {
+			this._infiniteScrollObserver.disconnect();
+		}
 	}
 
 	// ── Config ─────────────────────────────────────────────────────────────────
@@ -179,7 +203,7 @@ class KeepGridView extends obsidian.BasesView {
 				displayName: "Preview .base file contents",
 				type: "toggle",
 				key: "showBasePreview",
-				default: true,
+				default: false,
 			},
 			{
 				displayName: "Card preview max height (px)",
@@ -215,12 +239,16 @@ class KeepGridView extends obsidian.BasesView {
 	// ── Render ─────────────────────────────────────────────────────────────────
 
 	render() {
+		const t0 = performance.now();
 		const entries = this.data?.data ?? [];
 		const el = this._containerEl;
+		this._observer.disconnect();
+		if (this._onScrollHandler) {
+			this._containerEl.removeEventListener("scroll", this._onScrollHandler);
+			this._onScrollHandler = null;
+		}
 		el.empty();
 
-		// 再レンダー後の最初の _updateGridWidth() はアニメーションさせない
-		// （ノートから戻ったときなどにアニメーションが走るのを防ぐ）
 		this._suppressNextAnimation = true;
 		
 		el.style.setProperty("--kg-card-max-height", `${this._cardMaxHeight}px`);
@@ -232,113 +260,261 @@ class KeepGridView extends obsidian.BasesView {
 			return;
 		}
 
+		if (this._lastWidth === null) {
+			this._lastWidth = Math.max(0, this._containerEl.clientWidth - 32);
+		}
+
 		let pinned = [];
 		let normal = [];
 
-		if (this._showPinned) {
-			for (const entry of entries) {
-				const fm = this._getFrontmatter(entry.file);
-				if (fm["keep_pinned"] === true || fm["keep_pinned"] === "true") {
-					pinned.push(entry);
-				} else {
-					normal.push(entry);
-				}
+		for (const entry of entries) {
+			const cache = this.app?.metadataCache.getFileCache(entry.file) ?? {};
+			const fm = cache.frontmatter ?? {};
+			entry._cachedFm = fm;
+			entry._cachedCache = cache;
+
+			if (this._showPinned && (fm["keep_pinned"] === true || fm["keep_pinned"] === "true")) {
+				pinned.push(entry);
+			} else {
+				normal.push(entry);
 			}
-		} else {
-			normal = entries;
 		}
 
-		if (pinned.length > 0) {
-			this._renderSection(el, "Pinned", pinned);
+		this._allPinned = pinned;
+		this._allNormal = normal;
+		this._renderedPinnedCount = 0;
+		this._renderedNormalCount = 0;
+
+		this._pinnedGrid = null;
+		this._normalGrid = null;
+
+		if (this._allPinned.length > 0) {
+			this._pinnedGrid = this._createSectionContainer(el, "Pinned");
 		}
 		if (normal.length > 0) {
-			this._renderSection(el, pinned.length > 0 ? "Others" : null, normal);
+			this._normalGrid = this._createSectionContainer(el, pinned.length > 0 ? "Others" : null);
 		}
 
-		// レンダー後にグリッド幅を確定させる
-		this._updateGridWidth();
+		this._renderNextBatch();
+		this._setupInfiniteScroll();
+		console.log(`[KeepBasesView] render() total setup time: ${(performance.now() - t0).toFixed(1)}ms`);
 	}
 
-	/**
-	 * コンテナ幅からカラム数を整数計算し、グリッドの width を
-	 * N × cardWidth + (N-1) × gap に固定することでカード幅を一定に保つ。
-	 * カラム数が変化したときのみFLIPアニメーションを実行する。
-	 */
-	_updateGridWidth() {
-		const gap = 12;
-		const cardWidth = this.currentCardWidth;
-		const containerWidth = this._containerEl.clientWidth - 32; // padding 16px×2
-		const n = Math.max(1, Math.floor((containerWidth + gap) / (cardWidth + gap)));
-		const gridWidth = n * cardWidth + (n - 1) * gap;
-
-		// カラム数が変化したときのみFLIPを実行（毎ピクセルのリサイズでは発火しない）
-		const prevN = this._lastColumnCount;
-		// _suppressNextAnimation が true のとき（render直後）はアニメーションしない
-		const shouldAnimate = prevN !== null && prevN !== n && !this._suppressNextAnimation;
-		this._suppressNextAnimation = false;
-		this._lastColumnCount = n;
-
-		for (const grid of this._containerEl.querySelectorAll(".kg-grid")) {
-			if (shouldAnimate) {
-				const cards = [...grid.querySelectorAll(".kg-card")];
-
-				// 進行中のWeb Animationsをキャンセルして現在の座標を確定
-				cards.forEach(card => card.getAnimations().forEach(a => a.cancel()));
-
-				// FLIP: First — 旧座標を記録
-				const oldRects = cards.map(c => c.getBoundingClientRect());
-
-				// FLIP: Last — 新レイアウトを適用してリフロー強制
-				grid.style.setProperty("--kg-columns", String(n));
-				grid.style.width = `${gridWidth}px`;
-				void grid.offsetHeight; // 新レイアウトをコミット
-
-				// 新座標を一括取得
-				const newRects = cards.map(c => c.getBoundingClientRect());
-
-				// Play: Web Animations API で旧座標→新座標へ一括アニメーション
-				// CSS transitionと違い「コミット→transition開始」のタイミング問題がない
-				cards.forEach((card, i) => {
-					const dx = oldRects[i].left - newRects[i].left;
-					const dy = oldRects[i].top  - newRects[i].top;
-					if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
-					card.animate(
-						[
-							{ transform: `translate(${dx}px, ${dy}px)` },
-							{ transform: "translate(0, 0)" }
-						],
-						{
-							duration: 350,
-							easing: "cubic-bezier(0.4, 0, 0.2, 1)",
-							fill: "none",
-						}
-					);
+	_setupInfiniteScroll() {
+		let isTicking = false;
+		
+		this._onScrollHandler = () => {
+			if (!this._hasMoreToRender()) return;
+			
+			if (!isTicking) {
+				isTicking = true;
+				requestAnimationFrame(() => {
+					const el = this._containerEl;
+					const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+					if (remaining < 800) {
+						this._renderNextBatch();
+					}
+					isTicking = false;
 				});
-			} else {
-				// 初回レンダーまたは同カラム数の場合は即座に適用
-				grid.style.setProperty("--kg-columns", String(n));
-				grid.style.width = `${gridWidth}px`;
+			}
+		};
+		this._containerEl.addEventListener("scroll", this._onScrollHandler, { passive: true });
+		// Fill the viewport immediately if content is shorter than the visible area
+		this._fillViewport();
+	}
+
+	_fillViewport() {
+		requestAnimationFrame(async () => {
+			if (!this._hasMoreToRender() || this._isRenderingBatch) return;
+			const el = this._containerEl;
+			const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+			if (remaining < 800) {
+				const t0 = performance.now();
+				await this._renderNextBatch();
+				console.log(`[KeepBasesView] _fillViewport batch rendered in: ${(performance.now() - t0).toFixed(1)}ms (remaining: ${remaining}px)`);
+				this._fillViewport();
+			}
+		});
+	}
+
+	_hasMoreToRender() {
+		return (this._renderedPinnedCount < this._allPinned.length) ||
+			(this._renderedNormalCount < this._allNormal.length);
+	}
+
+	async _renderNextBatch() {
+		if (!this._hasMoreToRender() || this._isRenderingBatch) return;
+		this._isRenderingBatch = true;
+
+		const BATCH_SIZE = 24;
+		let remaining = BATCH_SIZE;
+		
+		if (this._pinnedGrid && this._renderedPinnedCount < this._allPinned.length) {
+			const toRender = this._allPinned.slice(this._renderedPinnedCount, this._renderedPinnedCount + remaining);
+			await this._appendCardsToSection(this._pinnedGrid, toRender);
+			this._renderedPinnedCount += toRender.length;
+			remaining -= toRender.length;
+		}
+		
+		if (remaining > 0 && this._normalGrid && this._renderedNormalCount < this._allNormal.length) {
+			const toRender = this._allNormal.slice(this._renderedNormalCount, this._renderedNormalCount + remaining);
+			await this._appendCardsToSection(this._normalGrid, toRender);
+			this._renderedNormalCount += toRender.length;
+		}
+
+		if (!this._hasMoreToRender()) {
+			// All done — clean up scroll listener
+			if (this._onScrollHandler) {
+				this._containerEl.removeEventListener("scroll", this._onScrollHandler);
+				this._onScrollHandler = null;
 			}
 		}
+		
+		this._isRenderingBatch = false;
 	}
 
-	_renderSection(parentEl, label, entries) {
+	_createSectionContainer(parentEl, label) {
 		const section = parentEl.createDiv({ cls: "kg-section" });
 		if (label) {
 			section.createDiv({ cls: "kg-section-label", text: label });
 		}
 		const grid = section.createDiv({ cls: "kg-grid" });
+
+		let n = 3;
+		if (this._lastWidth && this._lastWidth > 0) {
+			const gap = 12;
+			const cardWidth = this.currentCardWidth;
+			n = Math.max(1, Math.floor((this._lastWidth + gap) / (cardWidth + gap)));
+			const gridWidth = n * cardWidth + (n - 1) * gap;
+			grid.style.width = `${gridWidth}px`;
+		}
+
+		grid._kgColumns = n;
+		grid._kgColsArray = [];
+		for (let i = 0; i < n; i++) {
+			grid._kgColsArray.push(grid.createDiv({ cls: "kg-column" }));
+		}
+
+		return grid;
+	}
+
+	async _appendCardsToSection(grid, entries) {
+		const t0 = performance.now();
+		const cols = grid._kgColsArray;
+		const n = grid._kgColumns;
+		
+		// ── Pass 1: Create cards and render bodies off-DOM ──
+		const cards = [];
+		const loadPromises = [];
+		
+		let tCreate = 0;
 		for (const entry of entries) {
-			grid.appendChild(this._createCard(entry));
+			const tc0 = performance.now();
+			const card = this._createCard(entry, entry._cachedFm, entry._cachedCache);
+			tCreate += performance.now() - tc0;
+			
+			cards.push(card);
+			loadPromises.push(this._loadCardBody(card));
+		}
+		
+		const t1 = performance.now();
+		await Promise.all(loadPromises);
+		const t2 = performance.now();
+		
+		// ── Pass 2: Attach to DOM for a single layout measurement ──
+		const measureContainer = this._containerEl.createDiv({
+			attr: { style: `position: absolute; visibility: hidden; width: ${this.currentCardWidth}px; pointer-events: none; padding: 0; margin: 0;` }
+		});
+		
+		for (const card of cards) {
+			measureContainer.appendChild(card);
+		}
+		
+		// Force a single layout reflow and read all heights at once
+		const t3 = performance.now();
+		const heights = cards.map(card => card.offsetHeight);
+		const t4 = performance.now();
+		
+		measureContainer.remove();
+		
+		// ── Pass 2: Distribute to shortest columns using real heights ──
+		const colHeights = cols.map(col => col.offsetHeight);
+		
+		for (let i = 0; i < cards.length; i++) {
+			let minIdx = 0;
+			let minH = colHeights[0];
+			for (let j = 1; j < n; j++) {
+				if (colHeights[j] < minH) {
+					minH = colHeights[j];
+					minIdx = j;
+				}
+			}
+			cols[minIdx].appendChild(cards[i]);
+			colHeights[minIdx] += heights[i] + 12; // + gap
+		}
+		
+		// Now that they are in their final positions, observe them for DOM recycling
+		if (this.app) {
+			for (const card of cards) {
+				this._observer.observe(card);
+			}
+		}
+		
+		console.log(`[KeepBasesView] _appendCards (${entries.length} cards) - Total: ${(performance.now()-t0).toFixed(1)}ms | _createCard: ${tCreate.toFixed(1)}ms | Markdown Render: ${(t2-t1).toFixed(1)}ms | Reflow+Measure: ${(t4-t3).toFixed(1)}ms`);
+	}
+
+	_updateGridWidth(containerWidth) {
+		if (containerWidth === undefined) {
+			containerWidth = this._lastWidth || Math.max(0, this._containerEl.clientWidth - 32);
+		}
+		const gap = 12;
+		const cardWidth = this.currentCardWidth;
+		const n = Math.max(1, Math.floor((containerWidth + gap) / (cardWidth + gap)));
+		const gridWidth = n * cardWidth + (n - 1) * gap;
+
+		const prevN = this._lastColumnCount;
+		this._lastColumnCount = n;
+
+		for (const grid of this._containerEl.querySelectorAll(".kg-grid")) {
+			grid.style.width = `${gridWidth}px`;
+
+			if (prevN !== null && prevN !== n) {
+				const cards = [...grid.querySelectorAll(".kg-card")];
+				const cardHeights = cards.map(c => c.offsetHeight);
+				
+				cards.forEach(card => card.getAnimations().forEach(a => a.cancel()));
+				
+				grid.empty();
+				grid._kgColumns = n;
+				grid._kgColsArray = [];
+				for (let i = 0; i < n; i++) {
+					grid._kgColsArray.push(grid.createDiv({ cls: "kg-column" }));
+				}
+				
+				const colHeights = new Array(n).fill(0);
+				
+				cards.forEach((card, i) => {
+					let minIdx = 0;
+					let minH = colHeights[0];
+					for (let j = 1; j < n; j++) {
+						if (colHeights[j] < minH) {
+							minH = colHeights[j];
+							minIdx = j;
+						}
+					}
+					grid._kgColsArray[minIdx].appendChild(card);
+					colHeights[minIdx] += cardHeights[i] + 12;
+				});
+			}
 		}
 	}
 
 	// ── Card ───────────────────────────────────────────────────────────────────
 
-	_createCard(entry) {
+	_createCard(entry, fm, cache) {
 		const file = entry.file;
-		const fm   = this._getFrontmatter(file);
-		const cache = this.app?.metadataCache.getFileCache(file) ?? {};
+		if (!cache) cache = this.app?.metadataCache.getFileCache(file) ?? {};
+		if (!fm) fm = cache.frontmatter ?? {};
 
 		const cardEl = document.createElement("div");
 		cardEl.className = "kg-card";
@@ -372,37 +548,10 @@ class KeepGridView extends obsidian.BasesView {
 		const bodyEl = cardEl.createDiv({ cls: "kg-card-body markdown-rendered" });
 		bodyEl.style.display = "none"; // hidden until content arrives
 
-		if (this.app) {
-			if (file.extension === "base") {
-				if (this._showBasePreview) {
-					bodyEl.style.display = "";
-					bodyEl.addClass("kg-card-body-base");
-					obsidian.MarkdownRenderer.render(
-						this.app,
-						`![[${file.path}]]`,
-						bodyEl,
-						file.path,
-						this
-					);
-				}
-			} else {
-				this.app.vault.cachedRead(file)
-					.then(async content => {
-						const markdown = extractBodyMarkdown(content);
-						if (markdown) {
-							bodyEl.style.display = "";
-							await obsidian.MarkdownRenderer.render(
-								this.app,
-								markdown,
-								bodyEl,
-								file.path,
-								this  // Component (BasesView extends Component)
-							);
-						}
-					})
-					.catch(() => {});
-			}
-		}
+		cardEl._keepEntry = entry;
+		cardEl._keepBodyEl = bodyEl;
+		cardEl._kgMounted = true;
+		// Do not observe here. Observer will be attached after masonry distribution.
 
 		// ── Tags ───────────────────────────────────────────────────────────────
 		if (this._showTags) {
@@ -583,6 +732,83 @@ class KeepGridView extends obsidian.BasesView {
 		return cardEl;
 	}
 
+	_unmountCard(cardEl) {
+		if (!cardEl._kgMounted) return;
+		
+		// Lock the current height to prevent layout shifts
+		cardEl.style.height = cardEl.offsetHeight + "px";
+		
+		// Move all children to a DocumentFragment to remove them from the DOM
+		const frag = document.createDocumentFragment();
+		while (cardEl.firstChild) {
+			frag.appendChild(cardEl.firstChild);
+		}
+		cardEl._kgContentFrag = frag;
+		cardEl._kgMounted = false;
+	}
+
+	_mountCard(cardEl) {
+		if (cardEl._kgMounted) return;
+		
+		// Remove height lock
+		cardEl.style.height = "";
+		
+		// Restore all children
+		if (cardEl._kgContentFrag) {
+			cardEl.appendChild(cardEl._kgContentFrag);
+			cardEl._kgContentFrag = null;
+		}
+		cardEl._kgMounted = true;
+		
+		// Trigger markdown rendering if not done yet
+		if (!cardEl._kgBodyLoaded) {
+			this._loadCardBody(cardEl);
+		}
+	}
+
+	_loadCardBody(cardEl) {
+		const entry = cardEl._keepEntry;
+		const bodyEl = cardEl._keepBodyEl;
+		const file = entry?.file;
+
+		if (!this.app || !file || !bodyEl) return;
+
+		if (file.extension === "base") {
+			if (this._showBasePreview) {
+				bodyEl.style.display = "";
+				bodyEl.addClass("kg-card-body-base");
+				obsidian.MarkdownRenderer.render(
+					this.app,
+					`![[${file.path}]]`,
+					bodyEl,
+					file.path,
+					this
+				).catch(() => {});
+			}
+		} else if (file.extension === "md" || file.extension === "txt") {
+			this.app.vault.cachedRead(file)
+				.then(async content => {
+					const markdown = extractBodyMarkdown(content);
+					if (markdown) {
+						bodyEl.style.display = "";
+						await obsidian.MarkdownRenderer.render(
+							this.app,
+							markdown,
+							bodyEl,
+							file.path,
+							this  // Component (BasesView extends Component)
+						);
+					}
+					cardEl._kgBodyLoaded = true;
+				})
+				.catch(() => {
+					cardEl._kgBodyLoaded = true;
+				});
+		} else {
+			cardEl._kgBodyLoaded = true;
+		}
+	}
+
 	// ── Sub-renderers ──────────────────────────────────────────────────────────
 
 	_renderCover(cardEl, entry, filePath) {
@@ -601,10 +827,11 @@ class KeepGridView extends obsidian.BasesView {
 		const coverEl = cardEl.createDiv({
 			cls: `kg-card-cover kg-card-cover--${this._imageFit}`,
 		});
-		coverEl.createEl("img", { attr: { src, alt: "" } });
+		coverEl.createEl("img", { attr: { src, alt: "", loading: "lazy" } });
 	}
 
 	_renderTitle(titleEl, entry) {
+		let rendered = false;
 		if (this._cardTitlePropertyId) {
 			const val = entry.getValue(this._cardTitlePropertyId);
 			if (val) {
@@ -614,15 +841,25 @@ class KeepGridView extends obsidian.BasesView {
 					if (this.app?.renderContext) {
 						try {
 							val.renderTo(titleEl, this.app.renderContext);
-							return;
+							rendered = true;
 						} catch (_) {}
 					}
-					titleEl.textContent = str;
-					return;
+					if (!rendered) {
+						titleEl.textContent = str;
+						rendered = true;
+					}
 				}
 			}
 		}
-		titleEl.textContent = entry.file.basename;
+		
+		if (!rendered) {
+			titleEl.textContent = entry.file.extension !== "md" ? entry.file.name : entry.file.basename;
+		} else if (entry.file.extension !== "md") {
+			const extStr = `.${entry.file.extension}`;
+			if (!titleEl.textContent.endsWith(extStr)) {
+				titleEl.appendChild(document.createTextNode(extStr));
+			}
+		}
 	}
 
 	_renderTags(cardEl, fm, inlineTags) {

@@ -44,18 +44,26 @@
 	margin: 12px 0 16px 0;
 }
 
-/* ── Masonry Grid (CSS columns) ────────────────────────────── */
-/* JS (_updateGridWidth) がカラム数を計算して --kg-columns をセットする */
+/* ── Masonry Grid (Flexbox columns) ────────────────────────── */
+/* JS側でカラムのDOMを生成し、カードをラウンドロビンで振り分ける */
 .kg-grid.kg-grid {
-	columns: var(--kg-columns, 3);
-	column-gap: 12px;
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+}
+
+.kg-column {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 }
 
 /* ── Card ──────────────────────────────────────────────────── */
 .kg-card {
-	break-inside: avoid;
 	display: block;
-	margin-bottom: 12px;
+	margin-bottom: 0;
 	background: var(--kg-card-bg, var(--background-primary));
 	border: 1px solid var(--kg-card-border, var(--background-modifier-border));
 	border-radius: 8px;
@@ -69,6 +77,7 @@
 		background-color 0.15s ease;
 	box-sizing: border-box;
 	overflow: hidden;
+	contain: layout paint style;
 }
 
 .kg-card:hover {
@@ -234,13 +243,23 @@
 	color: var(--text-muted);
 	line-height: 1.5;
 	margin-top: 6px;
-	/* max-heightの代わりにline-clampで行数を制限し、末尾に「...」を表示する */
-	display: -webkit-box;
-	-webkit-line-clamp: var(--kg-card-max-lines, 16);
-	-webkit-box-orient: vertical;
+	/* Use max-height instead of -webkit-box to prevent markdown rendering bugs */
+	max-height: calc(var(--kg-card-max-lines, 16) * 19.5px);
 	overflow: hidden;
 	position: relative;
 	word-break: break-word;
+}
+
+/* Add a fade-out gradient at the bottom to indicate more content */
+.kg-card-body.kg-card-body::after {
+	content: "";
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 30px;
+	background: linear-gradient(to bottom, transparent, var(--kg-card-bg, var(--background-primary)));
+	pointer-events: none;
 }
 
 /* Paragraphs */
@@ -270,7 +289,7 @@
 .kg-card-body.kg-card-body ul,
 .kg-card-body.kg-card-body ol {
 	margin: 0 0 4px 0;
-	padding-left: 0;
+	padding-left: 20px;
 }
 
 .kg-card-body.kg-card-body li {
@@ -280,13 +299,13 @@
 
 /* Checkboxes (task list) */
 .kg-card-body.kg-card-body ul.contains-task-list {
-	padding-left: 4px;
+	padding-left: 26px;
 }
 
 .kg-card-body.kg-card-body ul.contains-task-list ul,
 .kg-card-body.kg-card-body ul.contains-task-list ol {
-	padding-left: 0;
-	padding-inline-start: 0;
+	padding-left: 20px;
+	padding-inline-start: 20px;
 	margin-left: 0;
 }
 
