@@ -19,6 +19,7 @@ A custom [Bases](https://obsidian.md/ja/help/bases) view plugin for Obsidian tha
 | **Card colors** | Color-code notes like Google Keep. Synced with `keep_color` frontmatter |
 | **Cover images** | Display a cover image from any note property |
 | **Body preview** | Shows a markdown preview of each note's body text |
+| **Popup editor** | Click a card to edit it in a Google Keep-style popup containing the full Obsidian Live Preview editor |
 | **.base preview** | Embed another `.base` file's table directly in a card |
 | **Context menu** | Right-click (desktop) or long-press (mobile) for quick actions |
 
@@ -40,6 +41,8 @@ Configure these from the > icon in the Bases view:
 
 **Settings → Community Plugins → Keep Bases View**
 
+- **Open in popup** — Open cards in a Google Keep-like popup modal for quick editing
+- **Popup max width (px)** — Set the maximum width of the edit popup (default: 800)
 - **Specific .base file path** — Path used by the "Open specific .base file" command
 
 ## Context Menu
