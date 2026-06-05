@@ -41,6 +41,7 @@ Configure these from the > icon in the Bases view:
 
 **Settings → Community Plugins → Keep Bases View**
 
+- **Enable layout animation** — Smoothly animate cards when the window or sidebar is resized (default: ON)
 - **Open in popup** — Open cards in a Google Keep-like popup modal for quick editing
 - **Popup max width (px)** — Set the maximum width of the edit popup (default: 800)
 - **Specific .base file path** — Path used by the "Open specific .base file" command
