@@ -109,7 +109,7 @@ class KeepGridView extends obsidian.BasesView {
 			for (const entry of entries) {
 				const height = entry.borderBoxSize ? entry.borderBoxSize[0].blockSize : entry.contentRect.height;
 				const card = entry.target;
-				if (card._kgLastHeight !== height) {
+				if (Math.abs((card._kgLastHeight || 0) - height) > 0.5) {
 					card._kgLastHeight = height;
 					needsReflow = true;
 				}
@@ -754,8 +754,11 @@ class KeepGridView extends obsidian.BasesView {
 	_unmountCard(cardEl) {
 		if (!cardEl._kgMounted) return;
 		
-		// Lock the current height to prevent layout shifts
-		cardEl.style.height = cardEl.offsetHeight + "px";
+		// Lock the current height to prevent layout shifts.
+		// Use exact fractional height to prevent ResizeObserver from firing
+		// due to integer rounding (which causes masonry columns to swap).
+		const exactHeight = cardEl._kgLastHeight || cardEl.getBoundingClientRect().height;
+		cardEl.style.height = exactHeight + "px";
 		
 		// Move all children to a DocumentFragment to remove them from the DOM
 		const frag = document.createDocumentFragment();
