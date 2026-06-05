@@ -21,7 +21,6 @@
 	font-size: 14px;
 }
 
-/* ── Section labels (PINNED / OTHERS) ─────────────────────── */
 .kg-section {
 	margin-bottom: 8px;
 }
@@ -44,46 +43,47 @@
 	margin: 12px 0 16px 0;
 }
 
-/* ── Masonry Grid (Flexbox columns) ────────────────────────── */
-/* JS側でカラムのDOMを生成し、カードをラウンドロビンで振り分ける */
+/* ── Masonry Grid (JS absolute positioning) ──────────────── */
+/* JS calculates left/top for each card; shortest-column gives left→right order */
 .kg-grid.kg-grid {
-	display: flex;
-	gap: 12px;
-	align-items: flex-start;
+	position: relative;
 }
 
-.kg-column {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 12px;
-}
-
-/* ── Card ──────────────────────────────────────────────────── */
+/* ── Card ───────────────────────────────────────────── */
 .kg-card {
-	display: block;
-	margin-bottom: 0;
+	position: absolute;
+	box-sizing: border-box;
 	background: var(--kg-card-bg, var(--background-primary));
 	border: 1px solid var(--kg-card-border, var(--background-modifier-border));
 	border-radius: 8px;
 	padding: 12px;
 	cursor: pointer;
-	position: relative;
+	overflow: hidden;
+	contain: paint style;
+}
+
+.kg-grid .kg-card {
 	transition:
 		box-shadow 0.15s ease,
 		border-color 0.15s ease,
-		transform 0.15s ease,
-		background-color 0.15s ease;
-	box-sizing: border-box;
-	overflow: hidden;
-	contain: layout paint style;
+		background-color 0.15s ease,
+		transform 0.28s ease !important;
 }
+
+/* Prevent animation on initial load */
+.kg-card[data-kg-initial] {
+	transition: none !important;
+}
+
+/* Prevent animation if disabled in settings */
+.kg-no-animations .kg-card {
+	transition: none !important;
+}
+
 
 .kg-card:hover {
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 	border-color: var(--background-modifier-border-hover);
-	transform: translateY(-1px);
 }
 
 /* ── Card Colors ───────────────────────────────────────────────────────────── */
