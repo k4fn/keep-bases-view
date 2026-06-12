@@ -398,8 +398,13 @@ body.is-mobile .kg-container {
 	gap: 6px;
 }
 
+.kg-lite-bullet {
+	align-items: flex-start;
+}
+
 .kg-lite-bullet-dot {
 	flex: 0 0 auto;
+	min-width: 1em;
 	color: var(--text-faint);
 }
 

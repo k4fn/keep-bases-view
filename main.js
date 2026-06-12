@@ -97,6 +97,10 @@ class KeepGridView extends obsidian.BasesView {
 		this._virtual = null;
 		this._virtualTicking = false;
 		this._virtualOverscan = 2600;
+		this._measureQueue = [];
+		this._queuedMeasureKeys = new Set();
+		this._activeMeasureLoads = 0;
+		this._maxMeasureLoads = 2;
 		this._lastLayoutWidth = 0;
 		this._lastMeasuredCardWidth = 0;
 		this._lastCardRects = new Map();
@@ -115,7 +119,6 @@ class KeepGridView extends obsidian.BasesView {
 		this._showPinned = true;
 		this._imageFit = "cover";
 		this._showBasePreview = true;
-		this._renderMarkdownPreview = true;
 		this._cardMaxHeight = 320;
 		this._basePreviewHeight = 150;
 
@@ -208,7 +211,6 @@ class KeepGridView extends obsidian.BasesView {
 		this._showPinned = cfg?.get("showPinned") !== false;
 		this._imageFit = String(cfg?.get("imageFit") ?? "cover");
 		this._showBasePreview = cfg?.get("showBasePreview") !== false;
-		this._renderMarkdownPreview = cfg?.get("renderMarkdownPreview") !== false;
 		this._cardMaxHeight = Number(cfg?.get("cardMaxHeight") ?? 320);
 		this._basePreviewHeight = Number(cfg?.get("basePreviewHeight") ?? 150);
 	}
@@ -280,12 +282,6 @@ class KeepGridView extends obsidian.BasesView {
 				default: true,
 			},
 			{
-				displayName: "Render Markdown previews",
-				type: "toggle",
-				key: "renderMarkdownPreview",
-				default: true,
-			},
-			{
 				displayName: "Card preview max height (px)",
 				type: "slider",
 				key: "cardMaxHeight",
@@ -331,6 +327,9 @@ class KeepGridView extends obsidian.BasesView {
 		this._previewObserver.disconnect();
 		this._previewQueue = [];
 		this._queuedPreviewCards.clear();
+		this._measureQueue = [];
+		this._queuedMeasureKeys.clear();
+		this._activeMeasureLoads = 0;
 		this._trackedCards = [];
 		this._visibleCards.clear();
 		this._scrollTickCount = 0;
@@ -415,7 +414,8 @@ class KeepGridView extends obsidian.BasesView {
 			section.items = section.entries.map((entry, index) => {
 				const fm = entry._cachedFm ?? {};
 				const cache = entry._cachedCache ?? {};
-				const height = this._getCachedVirtualHeight(entry) ?? this._estimateCardHeight(entry, fm, cache);
+				const cachedHeight = this._getCachedVirtualHeight(entry);
+				const height = cachedHeight ?? this._estimateCardHeight(entry, fm, cache);
 				let column = 0;
 				for (let i = 1; i < columns.length; i++) {
 					if (columns[i] < columns[column]) column = i;
@@ -423,7 +423,7 @@ class KeepGridView extends obsidian.BasesView {
 				const x = column * (cardWidth + gap);
 				const y = columns[column];
 				columns[column] += height + gap;
-				return { entry, fm, cache, index, key: `${section.id}:${entry.file.path}`, x, y, height, column, mountedEl: null };
+				return { entry, fm, cache, index, key: `${section.id}:${entry.file.path}`, x, y, height, measured: cachedHeight != null, column, mountedEl: null };
 			});
 
 			section.height = Math.max(0, ...columns) || 0;
@@ -494,15 +494,22 @@ class KeepGridView extends obsidian.BasesView {
 			for (const item of section.items) {
 				if (item.y > maxY || item.y + item.height < minY) continue;
 				keep.add(item.key);
+				const cardTop = sectionTop + item.y;
+				const actuallyVisible = cardTop + item.height >= rootTop && cardTop <= rootBottom;
+				if (!item.measured) {
+					if (item.entry.file.extension !== "base" || actuallyVisible) this._queueVirtualMeasure(section, item, actuallyVisible);
+					continue;
+				}
+
 				let cardEl = this._virtual.mounted.get(item.key);
 				if (!cardEl) {
 					cardEl = this._mountVirtualCard(section, item);
 				} else {
+					cardEl._kgVirtualItem = item;
+					item.mountedEl = cardEl;
 					this._positionVirtualCard(cardEl, item);
 				}
 
-				const cardTop = sectionTop + item.y;
-				const actuallyVisible = cardTop + item.height >= rootTop && cardTop <= rootBottom;
 				if (actuallyVisible) priorityCards.push(cardEl);
 				else if (item.entry.file.extension !== "base") this._queuePreview(cardEl, false);
 			}
@@ -530,15 +537,92 @@ class KeepGridView extends obsidian.BasesView {
 		section.gridEl.appendChild(cardEl);
 		this._virtual.mounted.set(item.key, cardEl);
 		item.mountedEl = cardEl;
+		this._queuePreview(cardEl, true);
 		return cardEl;
+	}
+
+	_queueVirtualMeasure(section, item, priority = false) {
+		if (!this._virtual || item.measured || item.measuring || this._queuedMeasureKeys.has(item.key)) return;
+		this._queuedMeasureKeys.add(item.key);
+		const task = { section, item, token: this._renderToken };
+		if (priority) this._measureQueue.unshift(task);
+		else this._measureQueue.push(task);
+		this._processMeasureQueue();
+	}
+
+	_processMeasureQueue() {
+		while (this._activeMeasureLoads < this._maxMeasureLoads && this._measureQueue.length > 0) {
+			const task = this._measureQueue.shift();
+			const { item, token } = task;
+			this._queuedMeasureKeys.delete(item.key);
+			if (!this._virtual || token !== this._renderToken || item.measured || item.measuring) continue;
+
+			item.measuring = true;
+			this._activeMeasureLoads++;
+			void this._measureVirtualItem(task)
+				.finally(() => {
+					item.measuring = false;
+					this._activeMeasureLoads = Math.max(0, this._activeMeasureLoads - 1);
+					if (token === this._renderToken) this._processMeasureQueue();
+				});
+		}
+	}
+
+	async _measureVirtualItem({ item, token }) {
+		if (!this._virtual || token !== this._renderToken) return;
+		const cardEl = this._createCard(item.entry, item.fm, item.cache);
+		cardEl.addClass("kg-virtual-measuring");
+		cardEl._kgVirtualItem = item;
+		cardEl.style.width = `${this._virtual.cardWidth}px`;
+		cardEl.style.height = "auto";
+		cardEl.style.transform = "none";
+		cardEl.style.setProperty("--kg-preview-lines", String(Math.max(1, Math.floor(this._cardMaxHeight / 19.5))));
+		this._measureEl.style.width = `${this._virtual.cardWidth}px`;
+		this._measureEl.appendChild(cardEl);
+
+		try {
+			const mode = item.entry.file.extension === "base" ? "upgrade" : "upgrade";
+			const hasPreview = await this._loadCardBody(cardEl, token, { mode });
+			if (token !== this._renderToken) return;
+			if (!hasPreview) {
+				cardEl.addClass("kg-no-preview");
+				cardEl._keepBodyEl?.remove();
+				cardEl._keepBodyEl = null;
+			}
+			this._updateBodyFade(cardEl);
+			if (item.entry.file.extension === "base" || cardEl.querySelector("img")) {
+				await this._waitForVirtualMeasurePaint();
+				if (token !== this._renderToken) return;
+			}
+			const measured = Math.ceil(cardEl.getBoundingClientRect().height);
+			if (!Number.isFinite(measured) || measured <= 0) return;
+			item.height = measured;
+			item.measured = true;
+			this._setCachedVirtualHeight(item.entry, measured);
+			this._layoutVirtualSections();
+			this._renderVirtualWindow();
+		} finally {
+			cardEl.remove();
+		}
+	}
+
+	_waitForVirtualMeasurePaint() {
+		return new Promise(resolve => {
+			requestAnimationFrame(() => requestAnimationFrame(resolve));
+		});
 	}
 
 	_positionVirtualCard(cardEl, item) {
 		const width = `${this._virtual.cardWidth}px`;
+		const height = `${Math.max(1, Math.ceil(item.height))}px`;
 		const transform = `translate3d(${Math.round(item.x)}px, ${Math.round(item.y)}px, 0)`;
 		if (cardEl._kgVirtualWidth !== width) {
 			cardEl._kgVirtualWidth = width;
 			cardEl.style.width = width;
+		}
+		if (cardEl._kgVirtualHeight !== height) {
+			cardEl._kgVirtualHeight = height;
+			cardEl.style.height = height;
 		}
 		if (cardEl._kgVirtualTransform !== transform) {
 			cardEl._kgVirtualTransform = transform;
@@ -550,14 +634,42 @@ class KeepGridView extends obsidian.BasesView {
 		const item = cardEl?._kgVirtualItem;
 		if (!item || !this._virtual || !cardEl.isConnected) return;
 		this._updateBodyFade(cardEl);
-		const measured = Math.ceil(cardEl.getBoundingClientRect().height);
+		const measured = this._measureVirtualCardNaturalHeight(cardEl);
 		if (!Number.isFinite(measured) || measured <= 0) return;
-		if (Math.abs(measured - item.height) < 2) return;
 
-		item.height = measured;
-		this._setCachedVirtualHeight(item.entry, measured);
-		this._layoutVirtualSections();
-		this._renderVirtualWindow();
+		if (measured < item.height) {
+			item.height = measured;
+			item.measured = true;
+			this._setCachedVirtualHeight(item.entry, measured);
+			this._layoutVirtualSections();
+			this._renderVirtualWindow();
+			return;
+		}
+
+		// Never grow a mounted virtual card after it is visible. Growth is what
+		// reads as layout jank during fast scrolling; the next offscreen measure
+		// can update the cache instead.
+	}
+
+	_measureVirtualCardNaturalHeight(cardEl) {
+		if (!cardEl || !this._measureEl || !this._virtual) return 0;
+		const clone = cardEl.cloneNode(true);
+		clone.classList.remove("kg-virtual-card", "kg-virtual-measuring");
+		clone.style.width = `${this._virtual.cardWidth}px`;
+		clone.style.height = "auto";
+		clone.style.minHeight = "0";
+		clone.style.transform = "none";
+		clone.style.position = "static";
+		clone.style.left = "";
+		clone.style.top = "";
+		clone.style.opacity = "1";
+		this._measureEl.style.width = `${this._virtual.cardWidth}px`;
+		this._measureEl.appendChild(clone);
+		try {
+			return Math.ceil(clone.getBoundingClientRect().height);
+		} finally {
+			clone.remove();
+		}
 	}
 
 	_getVirtualHeightKey(entry) {
@@ -571,6 +683,7 @@ class KeepGridView extends obsidian.BasesView {
 			this._imagePropertyId ?? "",
 			this._cardTitlePropertyId ?? "",
 			(this.data?.properties ?? []).join(","),
+			"no-grow-v1",
 		].join("\u001f");
 	}
 
@@ -944,7 +1057,9 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	_queuePreview(cardEl, priority = false) {
-		if (!cardEl || (cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading || this._queuedPreviewCards.has(cardEl)) return;
+		const isBasePreview = cardEl?._keepEntry?.file?.extension === "base";
+		const baseNeedsUpgrade = isBasePreview && this._basePreviewNeedsUpgrade(cardEl);
+		if (!cardEl || (!baseNeedsUpgrade && cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading || this._queuedPreviewCards.has(cardEl)) return;
 		this._queuedPreviewCards.add(cardEl);
 		this._previewQueue.push(cardEl);
 		if (priority) this._processPreviewQueue();
@@ -965,7 +1080,9 @@ class KeepGridView extends obsidian.BasesView {
 		while (this._activePreviewLoads < this._maxPreviewLoads && this._previewQueue.length > 0) {
 			const cardEl = this._previewQueue.shift();
 			this._queuedPreviewCards.delete(cardEl);
-			if (!cardEl?.isConnected || (cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
+			const isBasePreview = cardEl?._keepEntry?.file?.extension === "base";
+			const baseNeedsUpgrade = isBasePreview && this._basePreviewNeedsUpgrade(cardEl);
+			if (!cardEl?.isConnected || (!baseNeedsUpgrade && cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
 
 			const token = this._renderToken;
 			cardEl._kgPreviewLoading = true;
@@ -1003,7 +1120,9 @@ class KeepGridView extends obsidian.BasesView {
 		const cards = [];
 		for (const cardEl of this._previewQueue) {
 			if (!cardEl?.isConnected || seen.has(cardEl)) continue;
-			if ((cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
+			const isBasePreview = cardEl?._keepEntry?.file?.extension === "base";
+			const baseNeedsUpgrade = isBasePreview && this._basePreviewNeedsUpgrade(cardEl);
+			if ((!baseNeedsUpgrade && cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
 			const score = this._getPreviewQueueScore(cardEl, rootRect);
 			if (score.group >= 3) continue;
 			seen.add(cardEl);
@@ -1090,7 +1209,6 @@ class KeepGridView extends obsidian.BasesView {
 			this._showPinned,
 			this._imageFit,
 			this._showBasePreview,
-			this._renderMarkdownPreview,
 			this._cardMaxHeight,
 			this._basePreviewHeight,
 			...(this.data?.properties ?? []),
@@ -1363,7 +1481,7 @@ class KeepGridView extends obsidian.BasesView {
 					bodyEl.createDiv({ cls: "kg-base-placeholder", text: file.path });
 					return true;
 				}
-				await this._renderMarkdown(`![[${escapeWikiLinkPath(file.path)}]]`, bodyEl, "");
+				await this._renderBasePreview(file, bodyEl);
 				return true;
 			}
 
@@ -1376,8 +1494,8 @@ class KeepGridView extends obsidian.BasesView {
 				return true;
 			}
 
-			const maxLines = this._renderMarkdownPreview ? 40 : 25;
-			const maxChars = this._renderMarkdownPreview ? 3500 : 1000;
+			const maxLines = 40;
+			const maxChars = 3500;
 			const previewSource = await this._getPreviewSource(file, maxLines, maxChars);
 			if (this._renderToken !== token) return false;
 			bodyEl.style.display = "";
@@ -1497,7 +1615,7 @@ class KeepGridView extends obsidian.BasesView {
 				const text = this._cleanPreviewText(bullet[1]);
 				if (!text) continue;
 				const row = bodyEl.createDiv({ cls: "kg-lite-bullet" });
-				row.createSpan({ cls: "kg-lite-bullet-dot", text: "-" });
+				row.createSpan({ cls: "kg-lite-bullet-dot", text: "・" });
 				row.createSpan({ text });
 				renderedLines++;
 				continue;
@@ -1658,6 +1776,15 @@ class KeepGridView extends obsidian.BasesView {
 		}
 	}
 
+	async _renderBasePreview(file, el) {
+		const markdown = `![[${escapeWikiLinkPath(file.path)}]]`;
+		if (typeof obsidian.MarkdownRenderer.render === "function") {
+			await obsidian.MarkdownRenderer.render(this.app, markdown, el, file.path, this);
+			return;
+		}
+		await this._renderMarkdown(markdown, el, file.path);
+	}
+
 	async _getPreviewSource(file, maxLines, maxChars) {
 		const cacheKey = `${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${maxLines}\u001f${maxChars}`;
 		const cache = this.plugin?._previewSourceCache;
@@ -1703,6 +1830,12 @@ class KeepGridView extends obsidian.BasesView {
 		const clippedByHeight = bodyEl.scrollHeight > bodyEl.clientHeight + 1;
 		const clippedByPreviewLimit = bodyEl.dataset.keepTruncated === "true";
 		cardEl.classList.toggle("kg-body-clipped", clippedByHeight || clippedByPreviewLimit);
+	}
+
+	_basePreviewNeedsUpgrade(cardEl) {
+		const bodyEl = cardEl?._keepBodyEl;
+		if (!bodyEl) return false;
+		return cardEl._kgNeedsMarkdownUpgrade || Boolean(bodyEl.querySelector(".kg-base-placeholder"));
 	}
 
 	_cleanPreviewText(text) {
