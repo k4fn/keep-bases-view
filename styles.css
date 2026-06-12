@@ -10,6 +10,45 @@
 	height: 100%;
 	overflow-y: auto;
 	box-sizing: border-box;
+	container-type: inline-size;
+	overflow-anchor: auto;
+	position: relative;
+}
+
+.kg-content {
+	width: 100%;
+	min-height: 100%;
+	box-sizing: border-box;
+}
+
+.kg-container.kg-restoring-scroll .kg-content {
+	visibility: hidden;
+}
+
+.kg-container.kg-layout-pending .kg-content {
+	visibility: hidden;
+}
+
+body.is-phone .kg-container,
+body.is-mobile .kg-container {
+	padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+	scroll-padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+}
+
+.kg-measure {
+	position: absolute;
+	left: -10000px;
+	top: 0;
+	visibility: hidden;
+	pointer-events: none;
+	contain: layout paint style;
+}
+
+.kg-measure .kg-card {
+	height: auto;
+	width: 100%;
+	content-visibility: visible;
+	contain-intrinsic-size: auto;
 }
 
 /* ── Empty state ───────────────────────────────────────────── */
@@ -43,15 +82,46 @@
 	margin: 12px 0 16px 0;
 }
 
-/* ── Masonry Grid (JS absolute positioning) ──────────────── */
-/* JS calculates left/top for each card; shortest-column gives left→right order */
+/* ── Masonry Grid (CSS Grid row spans) ──────────────── */
+/* Cards keep left-to-right source order while row spans create the masonry effect. */
 .kg-grid.kg-grid {
+	width: 100%;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(var(--kg-card-width, 240px), 100%), min(var(--kg-card-width, 240px), 100%)));
+	grid-auto-rows: var(--kg-masonry-row-height, 4px);
+	grid-auto-flow: row;
+	gap: var(--kg-masonry-gap, 8px);
+	align-items: start;
+	justify-content: start;
+}
+
+.kg-virtual-section {
+	margin-bottom: 32px;
+}
+
+.kg-virtual-grid {
 	position: relative;
+	width: 100%;
+	min-height: 1px;
+	contain: layout paint style;
+}
+
+.kg-virtual-card {
+	position: absolute;
+	top: 0;
+	left: 0;
+	height: auto;
+	will-change: transform;
+	content-visibility: visible;
+	contain: layout paint style;
 }
 
 /* ── Card ───────────────────────────────────────────── */
 .kg-card {
-	position: absolute;
+	position: relative;
+	display: block;
+	width: auto;
+	margin: 0;
 	box-sizing: border-box;
 	background: var(--kg-card-bg, var(--background-primary));
 	border: 1px solid var(--kg-card-border, var(--background-modifier-border));
@@ -59,7 +129,17 @@
 	padding: 12px;
 	cursor: pointer;
 	overflow: hidden;
-	contain: paint style;
+	align-self: start;
+	height: 100%;
+	content-visibility: auto;
+	contain-intrinsic-size: 260px;
+	contain: layout paint style;
+}
+
+.kg-card.kg-virtual-card {
+	position: absolute;
+	height: auto;
+	content-visibility: visible;
 }
 
 .kg-grid .kg-card {
@@ -67,12 +147,7 @@
 		box-shadow 0.15s ease,
 		border-color 0.15s ease,
 		background-color 0.15s ease,
-		transform 0.28s ease !important;
-}
-
-/* Prevent animation on initial load */
-.kg-card[data-kg-initial] {
-	transition: none !important;
+		transform 0.22s ease !important;
 }
 
 /* Prevent animation if disabled in settings */
@@ -208,7 +283,16 @@
 	margin: -12px -12px 10px -12px;
 	border-radius: 8px 8px 0 0;
 	overflow: hidden;
-	max-height: 200px;
+	aspect-ratio: 16 / 9;
+	max-height: 180px;
+	background: var(--background-secondary);
+}
+
+.kg-card-cover-loading {
+	background:
+		linear-gradient(90deg, transparent, var(--background-modifier-hover), transparent),
+		var(--background-secondary);
+	background-size: 200% 100%;
 }
 
 .kg-card-cover img {
@@ -224,7 +308,6 @@
 .kg-card-cover--contain img {
 	object-fit: contain;
 	background: var(--background-secondary);
-	max-height: 160px;
 }
 
 /* ── Title ─────────────────────────────────────────────────── */
@@ -244,15 +327,30 @@
 	line-height: 1.5;
 	margin-top: 6px;
 	/* Use max-height instead of -webkit-box to prevent markdown rendering bugs */
-	max-height: calc(var(--kg-card-max-lines, 16) * 19.5px);
+	max-height: min(
+		calc(var(--kg-card-max-lines, 16) * 19.5px),
+		calc(var(--kg-preview-lines, 8) * 19.5px)
+	);
 	overflow: hidden;
 	position: relative;
 	word-break: break-word;
 }
 
-/* Add a fade-out gradient at the bottom to indicate more content */
+.kg-card.kg-no-preview .kg-card-body {
+	display: none !important;
+	margin: 0;
+	max-height: 0;
+}
+
+.kg-card.kg-no-preview .kg-card-body::after,
+.kg-card.kg-no-tags .kg-card-tags {
+	display: none !important;
+	margin: 0;
+}
+
 .kg-card-body.kg-card-body::after {
 	content: "";
+	display: none;
 	position: absolute;
 	bottom: 0;
 	left: 0;
@@ -260,6 +358,10 @@
 	height: 30px;
 	background: linear-gradient(to bottom, transparent, var(--kg-card-bg, var(--background-primary)));
 	pointer-events: none;
+}
+
+.kg-card.kg-body-clipped .kg-card-body::after {
+	display: block;
 }
 
 /* Paragraphs */
@@ -270,6 +372,126 @@
 
 .kg-card-body.kg-card-body p:last-child {
 	margin-bottom: 0;
+}
+
+.kg-lite-line,
+.kg-lite-heading,
+.kg-lite-bullet,
+.kg-lite-task {
+	font-size: 13px;
+	line-height: 1.45;
+	color: var(--text-muted);
+	margin: 2px 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.kg-lite-heading {
+	color: var(--text-normal);
+	font-weight: 600;
+}
+
+.kg-lite-bullet,
+.kg-lite-task {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.kg-lite-bullet-dot {
+	flex: 0 0 auto;
+	color: var(--text-faint);
+}
+
+.kg-lite-task input[type="checkbox"] {
+	flex: 0 0 auto;
+	margin-top: 1px;
+}
+
+.kg-lite-table-wrap {
+	width: 100%;
+	margin: 4px 0;
+	overflow: hidden;
+}
+
+.kg-lite-table {
+	width: 100%;
+	border-collapse: collapse;
+	table-layout: fixed;
+	font-size: 12px;
+	line-height: 1.35;
+	color: var(--text-muted);
+}
+
+.kg-lite-table th,
+.kg-lite-table td {
+	border: 1px solid var(--background-modifier-border);
+	padding: 3px 5px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.kg-lite-table th {
+	color: var(--text-normal);
+	font-weight: 600;
+	background: var(--background-secondary);
+}
+
+.kg-lite-code {
+	font-size: 11px;
+	line-height: 1.35;
+	padding: 6px 8px;
+	border-radius: 4px;
+	margin: 4px 0;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	overflow: hidden;
+	max-height: 110px;
+	white-space: pre-wrap;
+}
+
+.kg-lite-callout {
+	padding: 6px 8px;
+	border-radius: 5px;
+	margin: 4px 0;
+	background: var(--background-secondary);
+	border-left: 3px solid var(--interactive-accent);
+	color: var(--text-muted);
+}
+
+.kg-lite-callout-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-normal);
+	margin-bottom: 3px;
+}
+
+.kg-lite-callout-content {
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.kg-lite-image-wrap {
+	width: 100%;
+	margin: 4px 0;
+	overflow: hidden;
+	border-radius: 5px;
+	background: var(--background-secondary);
+}
+
+.kg-lite-image {
+	display: block;
+	max-width: 100%;
+	max-height: 150px;
+	width: 100%;
+	object-fit: contain;
+}
+
+.kg-lite-image-missing {
+	font-size: 12px;
+	color: var(--text-faint);
+	padding: 6px 8px;
 }
 
 /* Headings — compact */
@@ -325,7 +547,7 @@
 }
 
 /* iframes (hatena embed, YouTube, etc.) — hide entirely in card preview */
-.kg-card-body.kg-card-body iframe {
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) iframe {
 	display: none;
 }
 
@@ -361,15 +583,15 @@
 
 
 /* Embedded notes & external link cards — force compact */
-.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .internal-embed,
-.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed,
-.kg-card-body.kg-card-body .auto-card-link,
-.kg-card-body.kg-card-body .rich-link-card,
-.kg-card-body.kg-card-body .obsidian-card-link,
-.kg-card-body.kg-card-body [class*="card-link"],
-.kg-card-body.kg-card-body [class*="link-card"],
-.kg-card-body.kg-card-body [class*="link-embed"],
-.kg-card-body.kg-card-body [class*="embed-card"] {
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered):not(.kg-card-body-base) .internal-embed,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered):not(.kg-card-body-base) .markdown-embed,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) .auto-card-link,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) .rich-link-card,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) .obsidian-card-link,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="card-link"],
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="link-card"],
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="link-embed"],
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="embed-card"] {
 	max-height: 28px;
 	overflow: hidden;
 	border: 1px solid var(--background-modifier-border);
@@ -383,11 +605,11 @@
 }
 
 /* Hide inner content of embeds, keep only first text line visible */
-.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed-content,
-.kg-card-body.kg-card-body:not(.kg-card-body.kg-card-body-base.kg-card-body-base) .markdown-embed .markdown-preview-view,
-.kg-card-body.kg-card-body .auto-card-link-thumbnail,
-.kg-card-body.kg-card-body [class*="card-link"] img,
-.kg-card-body.kg-card-body [class*="link-card"] img {
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered):not(.kg-card-body-base) .markdown-embed-content,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered):not(.kg-card-body-base) .markdown-embed .markdown-preview-view,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) .auto-card-link-thumbnail,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="card-link"] img,
+.kg-card-body.kg-card-body:not(.kg-markdown-rendered) [class*="link-card"] img {
 	display: none;
 }
 
@@ -405,6 +627,15 @@
 	max-height: none;
 	display: block;
 	height: var(--kg-base-preview-height, 150px); /* 高さを完全に固定してガタつきを完全に防止する */
+	overflow: hidden;
+}
+
+.kg-base-placeholder {
+	height: var(--kg-base-preview-height, 150px);
+	display: flex;
+	align-items: flex-start;
+	color: var(--text-muted);
+	font-size: 12px;
 	overflow: hidden;
 }
 
@@ -495,6 +726,32 @@
 	margin: 4px 0;
 }
 
+.kg-card-body.kg-card-body.kg-markdown-rendered img {
+	display: block;
+	width: auto;
+	max-width: 100%;
+	max-height: 180px;
+	object-fit: contain;
+}
+
+.kg-card-body.kg-card-body.kg-markdown-rendered iframe,
+.kg-card-body.kg-card-body.kg-markdown-rendered video {
+	width: 100%;
+	max-width: 100%;
+	max-height: 180px;
+	border-radius: 4px;
+}
+
+.kg-card-body.kg-card-body.kg-markdown-rendered .internal-embed,
+.kg-card-body.kg-card-body.kg-markdown-rendered .markdown-embed {
+	max-width: 100%;
+	overflow: hidden;
+	border-radius: 4px;
+}
+
+.kg-card-body.kg-card-body.kg-markdown-rendered .markdown-preview-section {
+	min-height: 0;
+}
 
 /* ── Selected properties ───────────────────────────────────── */
 .kg-card-props {
@@ -554,11 +811,10 @@
 }
 
 /* ── Responsive: narrow pane ───────────────────────────────── */
-/* column-width を使っているため、コンテナ幅が狭い場合もカラム数は自動で減少する */
-/* 最小幅を下回ったら 1 カラムになるよう max-width を指定して保険をかける */
+/* Keep very narrow panes to a single readable column. */
 @container (max-width: 300px) {
 	.kg-grid.kg-grid {
-		columns: 1;
+		grid-template-columns: repeat(auto-fill, minmax(min(var(--kg-card-width, 240px), 100%), min(var(--kg-card-width, 240px), 100%)));
 	}
 }
 
