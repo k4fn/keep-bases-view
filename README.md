@@ -1,63 +1,72 @@
 # Keep Bases View
 
-A custom [Bases](https://obsidian.md/ja/help/bases) view plugin for Obsidian that displays your notes in a Google Keep-style masonry grid.
+A custom [Bases](https://obsidian.md/help/bases) view plugin for Obsidian that displays `.base` results in a Google Keep-style card layout.
 
 ![Keep Bases View screenshot](https://github.com/user-attachments/assets/eb923fe2-584f-4f63-a0d5-799eb5ce2333)
 
 ## Getting Started
 
-1. Enable the **Bases** plugin in Obsidian.
-2. Open a `.base` file and switch the view type to **Keep Bases View**.
-3. Use the > icon to configure the view options.
+1. Enable the **Bases** core plugin in Obsidian.
+2. Open a `.base` file.
+3. Switch the view type to **Keep Bases View**.
+4. Use the Bases view options menu to customize the cards.
 
 ## Features
 
 | Feature | Description |
-|---------|-------------|
-| **Masonry grid** | Responsive card layout, columns auto-adjust as the panel resizes |
-| **Pin notes** | Pin important notes to the top. Synced with `keep_pinned` frontmatter |
-| **Card colors** | Color-code notes like Google Keep. Synced with `keep_color` frontmatter |
-| **Cover images** | Display a cover image from any note property |
-| **Body preview** | Shows a markdown preview of each note's body text |
-| **Popup editor** | Click a card to edit it in a Google Keep-style popup containing the full Obsidian Live Preview editor |
-| **.base preview** | Embed another `.base` file's table directly in a card |
-| **Context menu** | Right-click (desktop) or long-press (mobile) for quick actions |
+| --- | --- |
+| **Keep-style cards** | Show Bases results as compact cards. |
+| **Pinned notes** | Show notes with `keep_pinned: true` in a separate `Pinned` section. |
+| **Card colors** | Color notes with `keep_color` frontmatter. |
+| **Cover images** | Display a cover image from a configured property. |
+| **Body previews** | Show note body previews with frontmatter removed. |
+| **Tags** | Show frontmatter and inline tags on cards. |
+| **.base previews** | Preview `.base` files inside cards when enabled. |
+| **Popup editor** | Open cards in a Google Keep-like popup editor. |
+| **Scroll restore** | Return to the previous scroll position after opening a card. |
+| **Context menu** | Open, pin, recolor, or delete cards from the card menu. |
 
 ## View Options
 
-Configure these from the > icon in the Bases view:
+Configure these from the Bases view options menu:
 
-- **Card title property** — Property to use as the card title (default: file name)
-- **Cover image property** — Property containing the cover image
-- **Image fit** — Crop to fill (Cover) or show full image (Contain)
-- **Card width** — Separate width settings for Desktop / Tablet / Mobile
-- **Show tags** — Toggle tag display on cards
-- **Pin important notes to the top** — Shows pinned notes in a separate "Pinned" section
-- **Preview .base file contents** — Toggle inline `.base` table preview
-- **Card preview max height** — Maximum height of the body preview area
-- **.base embed fixed height** — Fixed height for embedded `.base` previews
+- **Card title property** - Property to use as the card title. Defaults to the file name.
+- **Cover image property** - Property containing the cover image path or link.
+- **Image fit** - Crop to fill (`cover`) or show the full image (`contain`).
+- **Card width - Desktop (px)** - Card width on desktop.
+- **Card width - Tablet (px)** - Card width on tablet.
+- **Card width - Mobile (px)** - Card width on phone/mobile layouts.
+- **Show tags** - Toggle tag display on cards.
+- **Pin important notes to the top** - Show pinned notes in a separate `Pinned` section.
+- **Preview .base file contents** - Toggle inline `.base` previews.
+- **Card preview max height (px)** - Maximum height of note body previews.
+- **.base embed fixed height (px)** - Height for embedded `.base` previews.
 
 ## Plugin Settings
 
-**Settings → Community Plugins → Keep Bases View**
+Open **Settings > Community Plugins > Keep Bases View**:
 
-- **Enable layout animation** — Smoothly animate cards when the window or sidebar is resized (default: ON)
-- **Open in popup** — Open cards in a Google Keep-like popup modal for quick editing
-- **Popup max width (px)** — Set the maximum width of the edit popup (default: 800)
-- **Specific .base file path** — Path used by the "Open specific .base file" command
+- **Specific .base file path** - Path used by the `Open specific .base file` command.
+- **Open in popup** - Open cards in the popup editor by default.
+- **Popup max width (px)** - Maximum width of the edit popup. Default is `800`.
+- **Enable performance logging** - Log slow operations to the developer console for troubleshooting.
 
-## Context Menu
+## Card Actions
 
-Right-click a card on desktop (or long-press on mobile) to access these actions:
+Click a card to open it in the popup editor. Use a modifier key, or disable **Open in popup**, to open it in a normal Obsidian tab.
+
+Right-click a card on desktop, or long-press on mobile, to access:
 
 | Action | Description |
-|--------|-------------|
-| **Open in new tab** | Opens the note in a new Obsidian tab |
-| **Pin / Unpin** | Toggles the pin state (`keep_pinned` frontmatter) |
-| **Change color** | Opens a color palette to set the card color (`keep_color` frontmatter) |
-| **Delete** | Moves the note to the trash (with a confirmation prompt) |
+| --- | --- |
+| **Open in new tab** | Opens the note in a new Obsidian tab. |
+| **Pin / Unpin** | Toggles `keep_pinned` frontmatter. Markdown files only. |
+| **Change color** | Sets `keep_color` frontmatter. Markdown files only. |
+| **Delete** | Moves the file to the Obsidian trash after confirmation. |
+
+Desktop cards also show hover controls for pin, color, and delete.
 
 ## Commands
 
-- **Open a .base file** — Fuzzy search and open any `.base` file in the vault
-- **Open specific .base file** — Instantly open the `.base` file set in Plugin Settings
+- **Open a .base file** - Fuzzy search and open any `.base` file in the vault.
+- **Open specific .base file** - Open the `.base` file configured in Plugin Settings.
