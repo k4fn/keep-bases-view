@@ -1,0 +1,62 @@
+name: Auto Release Obsidian Plugin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'manifest.json'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # manifest.json からバージョンを取得して環境変数にセット
+      - name: Get version from manifest.json
+        id: get_version
+        run: |
+          VERSION=$(jq -r '.version' manifest.json)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Detected version: $VERSION"
+
+      # 同一バージョンのタグが存在しない場合のみタグを作成してプッシュ
+      - name: Create and push git tag
+        id: tag_check
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          if git rev-parse "${{ env.VERSION }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag ${{ env.VERSION }} already exists. Skipping release."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            git tag "${{ env.VERSION }}"
+            git push origin "${{ env.VERSION }}"
+            echo "Created and pushed tag: ${{ env.VERSION }}"
+          fi
+
+      # 新規バージョンの場合のみリリースを作成してファイルをアップロード
+      - name: Create Release
+        if: steps.tag_check.outputs.exists != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: v${{ env.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            main.js
+            manifest.json
+            styles.css
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
