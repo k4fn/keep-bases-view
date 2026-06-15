@@ -109,6 +109,8 @@ class KeepGridView extends obsidian.BasesView {
 		this._isAppendingCards = false;
 		this._appendScheduled = false;
 		this._scrollRestoreKey = null;
+		this._lastSavedScrollTop = null;
+		this._localScrollTop = null;
 
 		this._imagePropertyId = null;
 		this._cardTitlePropertyId = null;
@@ -130,6 +132,7 @@ class KeepGridView extends obsidian.BasesView {
 				const scrollTop = this._scrollEl.scrollTop || 0;
 				this._scrollDirection = scrollTop >= this._lastScrollTop ? 1 : -1;
 				this._lastScrollTop = scrollTop;
+				this._saveScrollPosition(scrollTop, false);
 				if (this._virtual) {
 					this._renderVirtualWindow();
 				} else {
@@ -194,6 +197,7 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	onClose() {
+		this._clearSavedScrollPosition();
 		this._debouncedRender.cancel();
 		this._previewObserver.disconnect();
 		this._resizeObserver.disconnect();
@@ -318,8 +322,9 @@ class KeepGridView extends obsidian.BasesView {
 		const token = ++this._renderToken;
 		const scrollKey = this._getScrollKey(entries);
 		this._scrollRestoreKey = scrollKey;
-		const savedScrollTop = this.plugin?._scrollPositions?.get(scrollKey);
-		if (savedScrollTop != null) this.plugin._scrollPositions.delete(scrollKey);
+		const savedRecord = this.plugin?._scrollPositions?.get(scrollKey);
+		const savedScrollTop = savedRecord?.persist === true ? savedRecord.top : this._localScrollTop;
+		if (savedRecord != null) this.plugin._scrollPositions.delete(scrollKey);
 		const shouldRestoreSavedScroll = savedScrollTop != null && savedScrollTop > 0;
 		const previousScrollTop = savedScrollTop ?? this._scrollEl.scrollTop;
 		this._renderSignature = signature;
@@ -635,7 +640,7 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	_getVirtualPreviewLines() {
-		return Math.max(1, Math.min(8, Math.floor(this._cardMaxHeight / 19.5)));
+		return Math.max(1, Math.floor(this._cardMaxHeight / 19.5));
 	}
 
 	_positionVirtualCard(cardEl, item) {
@@ -1235,10 +1240,22 @@ class KeepGridView extends obsidian.BasesView {
 		return `entries:${entries.length}:${paths.join("\u001f")}`;
 	}
 
-	_saveScrollPosition() {
+	_saveScrollPosition(scrollTop = null, persist = false) {
+		const nextScrollTop = scrollTop ?? this._scrollEl.scrollTop ?? 0;
+		if (this._lastSavedScrollTop !== nextScrollTop) {
+			this._lastSavedScrollTop = nextScrollTop;
+			this._localScrollTop = nextScrollTop;
+		}
+		if (!persist || !this.plugin?._scrollPositions) return;
+		const key = this._scrollRestoreKey ?? this._getScrollKey(this.data?.data ?? []);
+		this.plugin._scrollPositions.set(key, { top: nextScrollTop, persist: true });
+	}
+
+	_clearSavedScrollPosition() {
 		if (!this.plugin?._scrollPositions) return;
 		const key = this._scrollRestoreKey ?? this._getScrollKey(this.data?.data ?? []);
-		this.plugin._scrollPositions.set(key, this._scrollEl.scrollTop);
+		this.plugin._scrollPositions.delete(key);
+		this._lastSavedScrollTop = null;
 	}
 
 	_createCard(entry, fm, cache) {
@@ -1339,8 +1356,11 @@ class KeepGridView extends obsidian.BasesView {
 			const ph = palette.offsetHeight;
 			let top = rect.bottom + 6;
 			let left = rect.left;
-			if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-			if (top + ph > window.innerHeight - 8) top = (rect.top || rect.bottom) - ph - 6;
+			const margin = obsidian.Platform.isMobile ? 12 : 8;
+			if (left + pw > window.innerWidth - margin) left = window.innerWidth - pw - margin;
+			if (left < margin) left = margin;
+			if (top + ph > window.innerHeight - margin) top = (rect.top || rect.bottom) - ph - 6;
+			if (top < margin) top = margin;
 			palette.style.top = `${top}px`;
 			palette.style.left = `${left}px`;
 
@@ -1390,7 +1410,7 @@ class KeepGridView extends obsidian.BasesView {
 				item.setTitle("Open in new tab")
 					.setIcon("file-plus")
 					.onClick(() => {
-						this._saveScrollPosition();
+						this._saveScrollPosition(null, true);
 						const leaf = this.app.workspace.getLeaf("tab");
 						void leaf.openFile(file);
 					});
@@ -1422,7 +1442,7 @@ class KeepGridView extends obsidian.BasesView {
 			if (!newLeaf && this.plugin?.settings?.openInPopup !== false) {
 				new KeepEditModal(this.app, file, this.plugin).open();
 			} else {
-				this._saveScrollPosition();
+				this._saveScrollPosition(null, true);
 				const leaf = this.app.workspace.getLeaf(newLeaf);
 				void leaf.openFile(file);
 			}
@@ -1579,15 +1599,15 @@ class KeepGridView extends obsidian.BasesView {
 			if (!cleanLine) continue;
 			renderableLines++;
 			if (renderedLines >= maxLines) continue;
-			const task = line.match(/^[-*]\s+\[([ xX])]\s+(.*)$/);
+			const task = line.match(/^(\s*)[-*]\s+\[([ xX])]\s*(.*)$/);
 			if (task) {
-				const text = this._cleanPreviewText(task[2]);
-				if (!text) continue;
+				const text = this._cleanPreviewText(task[3]);
 				const row = bodyEl.createDiv({ cls: "kg-lite-task" });
+				this._applyPreviewIndent(row, task[1]);
 				const checkbox = row.createEl("input", { type: "checkbox" });
-				checkbox.checked = task[1].toLowerCase() === "x";
+				checkbox.checked = task[2].toLowerCase() === "x";
 				checkbox.disabled = true;
-				row.createSpan({ text });
+				if (text) row.createSpan({ text });
 				renderedLines++;
 				continue;
 			}
@@ -1601,11 +1621,12 @@ class KeepGridView extends obsidian.BasesView {
 				continue;
 			}
 
-			const bullet = line.match(/^[-*]\s+(.*)$/);
+			const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
 			if (bullet) {
-				const text = this._cleanPreviewText(bullet[1]);
+				const text = this._cleanPreviewText(bullet[2]);
 				if (!text) continue;
 				const row = bodyEl.createDiv({ cls: "kg-lite-bullet" });
+				this._applyPreviewIndent(row, bullet[1]);
 				row.createSpan({ cls: "kg-lite-bullet-dot", text: "-" });
 				row.createSpan({ text });
 				renderedLines++;
@@ -1619,6 +1640,11 @@ class KeepGridView extends obsidian.BasesView {
 			renderedLines,
 			truncated: renderableLines > renderedLines,
 		};
+	}
+
+	_applyPreviewIndent(row, indent) {
+		const depth = Math.floor((indent ?? "").replace(/\t/g, "    ").length / 2);
+		if (depth > 0) row.style.marginLeft = `${Math.min(28, depth * 10)}px`;
 	}
 
 	_readMarkdownTable(lines, startIndex) {
