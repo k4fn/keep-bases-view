@@ -71,3 +71,17 @@ The plugin is optimized for large `.base` result sets by using a fixed-width vir
 - Avoid scroll jank caused by visible card height changes.
 - Allow optional performance logging to the developer console for diagnosing slow cards or previews.
 - Keep implementation self-contained in `main.js` and compatible with the existing `manifest.json` and `styles.css`.
+
+## Animation Requirements
+
+- Animate cards sliding to their new positions when the column count changes due to window or sidebar resize (card reflow).
+- Provide a setting in the Community Plugin options to toggle this animation on/off (`enableAnimation`, enabled by default).
+- For the standard (non-virtual) grid layout:
+  - Implement a traditional FLIP (First, Last, Invert, Play) animation.
+  - Measure before/after bounding rects, apply the inverted transform instantly with transitions disabled, force a reflow, and trigger the transition back to the default position in the next animation frame.
+- For the virtual masonry layout:
+  - Avoid standard DOM rect-based FLIP animations because `ResizeObserver` fires continuously during resizing/sidebar dragging, which introduces timing gaps (e.g. `requestAnimationFrame` delay) that cause jitter, lag, or incorrect intermediate states.
+  - Use the Web Animations API (`Element.animate`) to transition directly and atomically from the old logical position to the new logical position.
+  - Track target logical positions via a custom property (`_kgVirtualTransform`) to avoid reading mid-animation styles.
+  - Cancel any ongoing reflow animation (`_kgReflowAnimation.cancel()`) immediately when a new resize event fires, avoiding animation stack-up and ensuring responsiveness during active dragging.
+  - Ensure standard CSS transitions are disabled for virtual cards (`.kg-no-animations .kg-virtual-card { transition: none !important; }`) to prevent interference with Web Animations API.
