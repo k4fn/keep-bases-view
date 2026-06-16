@@ -155,6 +155,11 @@ body.is-mobile .kg-container {
 	transition: none !important;
 }
 
+/* Never animate virtual cards during initial render */
+.kg-no-animations .kg-virtual-card {
+	transition: none !important;
+}
+
 
 .kg-card:hover {
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);

@@ -344,6 +344,7 @@ class KeepGridView extends obsidian.BasesView {
 		this._scrollEl.classList.toggle("kg-restoring-scroll", shouldRestoreSavedScroll);
 		this._contentEl.empty();
 		this._scrollEl.addClass("kg-no-animations");
+		requestAnimationFrame(() => requestAnimationFrame(() => this._scrollEl.removeClass("kg-no-animations")));
 		this._scrollEl.style.setProperty("--kg-card-width", `${this.currentCardWidth}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-row-height", `${this._masonryRowHeight}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-gap", `${this._masonryGap}px`);
@@ -657,6 +658,11 @@ class KeepGridView extends obsidian.BasesView {
 			cardEl.style.height = height;
 		}
 		if (cardEl._kgVirtualTransform !== transform) {
+			// Cancel any in-progress reflow animation so the new position takes effect immediately
+			if (cardEl._kgReflowAnimation) {
+				cardEl._kgReflowAnimation.cancel();
+				cardEl._kgReflowAnimation = null;
+			}
 			cardEl._kgVirtualTransform = transform;
 			cardEl.style.transform = transform;
 		}
@@ -928,8 +934,46 @@ class KeepGridView extends obsidian.BasesView {
 		const t0 = performance.now();
 		if (this._virtual) {
 			this._scrollEl.style.setProperty("--kg-card-width", `${this.currentCardWidth}px`);
-			this._layoutVirtualSections();
-			this._renderVirtualWindow();
+			const animEnabled = this.plugin?.settings?.enableAnimation !== false;
+
+			if (animEnabled) {
+				// Step 1: Capture each card's current logical position (= last layout target)
+				// Using _kgVirtualTransform avoids reading mid-animation style.transform values.
+				const oldTransforms = new Map();
+				for (const [, cardEl] of this._virtual.mounted) {
+					if (!cardEl.isConnected) continue;
+					oldTransforms.set(cardEl, cardEl._kgVirtualTransform ?? cardEl.style.transform);
+				}
+
+				// Step 2: Apply new layout (updates _kgVirtualTransform + style.transform for all cards)
+				this._layoutVirtualSections();
+				this._renderVirtualWindow();
+
+				// Step 3: For each card whose position changed, start a Web Animation.
+				// Web Animations API is atomic: no rAF gap, no CSS transition timing issues.
+				for (const [cardEl, oldTransform] of oldTransforms) {
+					if (!cardEl.isConnected) continue;
+					const newTransform = cardEl._kgVirtualTransform ?? cardEl.style.transform;
+					if (oldTransform === newTransform) continue;
+
+					// Cancel previous animation (if column count changed twice rapidly)
+					cardEl._kgReflowAnimation?.cancel();
+
+					// Animate from old logical position to new logical position
+					const anim = cardEl.animate(
+						[{ transform: oldTransform }, { transform: newTransform }],
+						{ duration: 220, easing: "ease", fill: "none" }
+					);
+					cardEl._kgReflowAnimation = anim;
+					const done = () => { if (cardEl._kgReflowAnimation === anim) cardEl._kgReflowAnimation = null; };
+					anim.onfinish = done;
+					anim.oncancel = done;
+				}
+			} else {
+				this._layoutVirtualSections();
+				this._renderVirtualWindow();
+			}
+
 			const elapsed = performance.now() - t0;
 			if (elapsed > 16) this._perfLog("resizeLayout", { elapsed: Math.round(elapsed), virtual: true });
 			return;
@@ -2062,6 +2106,16 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				}));
 
 		new obsidian.Setting(containerEl)
+			.setName("Card move animation")
+			.setDesc("Animate cards sliding to their new positions when the column count changes due to a window or sidebar resize.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.enableAnimation !== false)
+				.onChange(async value => {
+					this.plugin.settings.enableAnimation = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new obsidian.Setting(containerEl)
 			.setName("Enable performance logging")
 			.setDesc("Log slow Keep Bases View operations to the developer console for performance analysis.")
 			.addToggle(toggle => toggle
@@ -2149,7 +2203,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
-			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false },
+			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true },
 			await this.loadData()
 		);
 	}
