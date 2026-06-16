@@ -2109,7 +2109,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 
 		this.registerBasesView(KEEP_VIEW_TYPE, {
 			name: "Keep Bases View",
-			icon: "layout-grid",
+			icon: "layout-dashboard",
 			factory: (controller, scrollEl) => new KeepGridView(controller, scrollEl, this),
 			options: KeepGridView.getViewOptions,
 		});

@@ -8,7 +8,7 @@ The plugin is optimized for large `.base` result sets by using a fixed-width vir
 
 ## Functional Requirements
 
-- Register a custom Bases view named `Keep Bases View` with the `layout-grid` icon.
+- Register a custom Bases view named `Keep Bases View` with the `layout-dashboard` icon.
 - Display `.base` query results as Google Keep-style masonry cards.
 - Use fixed card widths from the view options for desktop, tablet, and mobile.
 - Change the number of columns when the pane width changes, instead of stretching cards.
