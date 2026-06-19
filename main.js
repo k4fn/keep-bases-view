@@ -307,34 +307,28 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	get currentCardWidth() {
-		return this._getResponsiveCardWidth();
-	}
-
-	_getResponsiveCardWidth(contentWidth = null) {
-		if (document.body.classList.contains("is-phone")) {
-			if (this._usesMobileTwoColumnLayout()) {
-				const metrics = this._getMobileTwoColumnMetrics(contentWidth);
-				if (metrics) return metrics.cardWidth;
-			}
-			return this._cardWidthMobile;
+		if (this._isMobileEvenColumns()) {
+			const w = this._getMobileEvenCardWidth();
+			if (w > 0) return w;
 		}
+		if (document.body.classList.contains("is-phone")) return this._cardWidthMobile;
 		if (document.body.classList.contains("is-tablet")) return this._cardWidthTablet;
 		return this._cardWidthPc;
 	}
 
-	_usesMobileTwoColumnLayout() {
-		return document.body.classList.contains("is-phone") && this.plugin?.settings?.mobileTwoColumnLayout === true;
+	_isMobileEvenColumns() {
+		if (this.plugin?.settings?.mobileEvenColumns !== true) return false;
+		return document.body.classList.contains("is-phone") || document.body.classList.contains("is-mobile");
 	}
 
-	_getMobileTwoColumnMetrics(contentWidth = null) {
-		if (!this._usesMobileTwoColumnLayout()) return null;
-		const rawWidth = contentWidth ?? this._getVirtualContentWidth();
-		if (rawWidth <= 1) return null;
-		const availableWidth = Math.max(1, rawWidth);
+	_getMobileEvenCardWidth() {
+		const contentWidth = this._getVirtualContentWidth();
+		if (contentWidth <= 1) return 0;
 		const gap = this._masonryGap;
-		const cardWidth = Math.max(1, Math.floor((availableWidth - gap) / 2));
-		const offsetX = 0;
-		return { availableWidth, cardWidth, columnCount: 2, offsetX };
+		// cardWidth = (contentWidth - gap) / 2
+		// This makes: left padding (container) = gap, gap between cards = gap, right padding (container) = gap
+		// Container padding is set via CSS variable --kg-mobile-even-padding
+		return Math.max(80, Math.floor((contentWidth - gap) / 2));
 	}
 
 	render() {
@@ -370,7 +364,6 @@ class KeepGridView extends obsidian.BasesView {
 		this._contentEl.empty();
 		this._scrollEl.addClass("kg-no-animations");
 		requestAnimationFrame(() => requestAnimationFrame(() => this._scrollEl.removeClass("kg-no-animations")));
-		this._scrollEl.classList.toggle("kg-mobile-two-column", this._usesMobileTwoColumnLayout());
 		this._scrollEl.style.setProperty("--kg-card-width", `${this.currentCardWidth}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-row-height", `${this._masonryRowHeight}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-gap", `${this._masonryGap}px`);
@@ -432,10 +425,19 @@ class KeepGridView extends obsidian.BasesView {
 			return;
 		}
 		const gap = this._masonryGap;
-		const mobileMetrics = this._getMobileTwoColumnMetrics(contentWidth);
-		const cardWidth = mobileMetrics?.cardWidth ?? Math.max(1, Math.min(this._getResponsiveCardWidth(contentWidth), contentWidth));
-		const columnCount = mobileMetrics?.columnCount ?? Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
-		const offsetX = mobileMetrics?.offsetX ?? 0;
+		const mobileEven = this._isMobileEvenColumns();
+		let cardWidth, columnCount;
+		if (mobileEven) {
+			columnCount = 2;
+			cardWidth = Math.max(80, Math.floor((contentWidth - gap) / 2));
+			const scrollbarW = this._scrollEl.offsetWidth - this._scrollEl.clientWidth;
+			this._scrollEl.style.setProperty("--kg-scrollbar-width", `${scrollbarW}px`);
+			this._scrollEl.classList.add("kg-mobile-even");
+		} else {
+			cardWidth = Math.max(1, Math.min(this.currentCardWidth, contentWidth));
+			columnCount = Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
+			this._scrollEl.classList.remove("kg-mobile-even");
+		}
 		const shouldHideUntilPositioned = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (shouldHideUntilPositioned) this._scrollEl.addClass("kg-layout-pending");
 		this._virtual.width = contentWidth;
@@ -454,7 +456,7 @@ class KeepGridView extends obsidian.BasesView {
 				for (let i = 1; i < columns.length; i++) {
 					if (columns[i] < columns[column]) column = i;
 				}
-				const x = offsetX + column * (cardWidth + gap);
+				const x = column * (cardWidth + gap);
 				const y = columns[column];
 				columns[column] += height + gap;
 				return { entry, fm, cache, index, key: `${section.id}:${entry.file.path}`, x, y, height, measured: cachedHeight != null, column, mountedEl: null };
@@ -490,9 +492,14 @@ class KeepGridView extends obsidian.BasesView {
 		const width = this._getVirtualContentWidth();
 		if (width <= 1) return;
 		const gap = this._masonryGap;
-		const mobileMetrics = this._getMobileTwoColumnMetrics(width);
-		const cardWidth = mobileMetrics?.cardWidth ?? Math.max(1, Math.min(this._getResponsiveCardWidth(width), width));
-		const columnCount = mobileMetrics?.columnCount ?? Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
+		let cardWidth, columnCount;
+		if (this._isMobileEvenColumns()) {
+			columnCount = 2;
+			cardWidth = Math.max(80, Math.floor((width - gap) / 2));
+		} else {
+			cardWidth = Math.max(1, Math.min(this.currentCardWidth, width));
+			columnCount = Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
+		}
 		const wasSingleColumn = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (wasSingleColumn || Math.abs(width - this._virtual.width) > 1 || Math.abs(cardWidth - this._virtual.cardWidth) > 1) {
 			this._layoutVirtualSections();
@@ -707,7 +714,7 @@ class KeepGridView extends obsidian.BasesView {
 		return [
 			entry.file?.path,
 			entry.file?.stat?.mtime ?? 0,
-			this._virtual?.cardWidth ?? this.currentCardWidth,
+			this.currentCardWidth,
 			this._cardMaxHeight,
 			this._basePreviewHeight,
 			this._showTags,
@@ -947,7 +954,7 @@ class KeepGridView extends obsidian.BasesView {
 
 	_getGridColumnWidth(gridEl) {
 		const gridWidth = gridEl.clientWidth || this._contentEl.clientWidth || this._scrollEl.clientWidth || this.currentCardWidth;
-		return Math.max(1, Math.min(this._getResponsiveCardWidth(gridWidth), gridWidth));
+		return Math.max(1, Math.min(this.currentCardWidth, gridWidth));
 	}
 
 	_scheduleResizeAnimation() {
@@ -1269,7 +1276,6 @@ class KeepGridView extends obsidian.BasesView {
 			this._cardWidthPc,
 			this._cardWidthTablet,
 			this._cardWidthMobile,
-			this.plugin?.settings?.mobileTwoColumnLayout === true,
 			this._showTags,
 			this._showPinned,
 			this._imageFit,
@@ -2146,14 +2152,13 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				}));
 
 		new obsidian.Setting(containerEl)
-			.setName("Mobile two-column layout")
-			.setDesc("On phone layouts, show cards in two columns and ignore the Mobile card width view option. Foldable devices follow Obsidian's phone/tablet mode.")
+			.setName("Mobile: even 2-column layout")
+			.setDesc("On mobile, always show 2 columns with equal left, gap, and right spacing. Overrides the mobile card width setting.")
 			.addToggle(toggle => toggle
-				.setValue(this.plugin.settings.mobileTwoColumnLayout === true)
+				.setValue(this.plugin.settings.mobileEvenColumns === true)
 				.onChange(async value => {
-					this.plugin.settings.mobileTwoColumnLayout = value;
+					this.plugin.settings.mobileEvenColumns = value;
 					await this.plugin.saveSettings();
-					this.plugin.refreshKeepViews();
 				}));
 
 		new obsidian.Setting(containerEl)
@@ -2244,28 +2249,13 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
-			{
-				specificBaseFilePath: "",
-				openInPopup: true,
-				popupWidth: 800,
-				enablePerformanceLogging: false,
-				enableAnimation: true,
-				mobileTwoColumnLayout: false,
-			},
+			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true, mobileEvenColumns: false },
 			await this.loadData()
 		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-
-	refreshKeepViews() {
-		this.app.workspace.iterateAllLeaves(leaf => {
-			const view = leaf.view;
-			if (view?.type !== KEEP_VIEW_TYPE) return;
-			if (typeof view.onDataUpdated === "function") view.onDataUpdated();
-		});
 	}
 }
 

@@ -35,10 +35,11 @@ body.is-mobile .kg-container {
 	scroll-padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
 }
 
-body.is-phone .kg-container.kg-mobile-two-column,
-body.is-mobile .kg-container.kg-mobile-two-column {
+/* Mobile even 2-column mode: make container padding equal to the masonry gap.
+   Subtract the scrollbar width from the right padding so the cards look visually centered. */
+.kg-container.kg-mobile-even {
 	padding-left: var(--kg-masonry-gap, 8px);
-	padding-right: var(--kg-masonry-gap, 8px);
+	padding-right: calc(var(--kg-masonry-gap, 8px) - var(--kg-scrollbar-width, 0px));
 }
 
 .kg-measure {
