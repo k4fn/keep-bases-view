@@ -35,6 +35,12 @@ body.is-mobile .kg-container {
 	scroll-padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px));
 }
 
+body.is-phone .kg-container.kg-mobile-two-column,
+body.is-mobile .kg-container.kg-mobile-two-column {
+	padding-left: var(--kg-masonry-gap, 8px);
+	padding-right: var(--kg-masonry-gap, 8px);
+}
+
 .kg-measure {
 	position: absolute;
 	left: -10000px;

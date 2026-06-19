@@ -11,6 +11,9 @@ The plugin is optimized for large `.base` result sets by using a fixed-width vir
 - Register a custom Bases view named `Keep Bases View` with the `layout-dashboard` icon.
 - Display `.base` query results as Google Keep-style masonry cards.
 - Use fixed card widths from the view options for desktop, tablet, and mobile.
+- Provide a Community Plugin setting to force a two-column layout on phone layouts.
+- When mobile two-column layout is enabled, override the `Card width - Mobile (px)` view option and derive card width from the available content width and the standard masonry gap.
+- On foldable devices, follow Obsidian's platform class: devices reported as phone use the two-column mobile override, while devices reported as tablet use the tablet card width setting.
 - Change the number of columns when the pane width changes, instead of stretching cards.
 - Keep horizontal and vertical masonry gaps compact.
 - Split notes with `keep_pinned: true` into a `Pinned` section when pinned notes are enabled.
@@ -41,7 +44,7 @@ The plugin is optimized for large `.base` result sets by using a fixed-width vir
 - Optionally render embedded `.base` files as card previews.
 - Use Obsidian's Markdown embed renderer for `.base` previews when enabled.
 - Provide view options for title property, image property, image fit, desktop/tablet/mobile card widths, tags, pinned notes, `.base` previews, card preview height, and `.base` preview height.
-- Provide plugin settings for the specific `.base` path, popup behavior, popup width, and performance logging.
+- Provide plugin settings for the specific `.base` path, popup behavior, popup width, mobile two-column layout, and performance logging.
 - Provide commands to fuzzy-open any `.base` file and to open a configured `.base` file.
 
 ## Virtual Masonry Requirements

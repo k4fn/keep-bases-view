@@ -49,6 +49,7 @@ Open **Settings > Community Plugins > Keep Bases View**:
 - **Specific .base file path** - Path used by the `Open specific .base file` command.
 - **Open in popup** - Open cards in the popup editor by default.
 - **Popup max width (px)** - Maximum width of the edit popup. Default is `800`.
+- **Mobile two-column layout** - Show two card columns on phone layouts. This overrides the mobile card width option.
 - **Enable performance logging** - Log slow operations to the developer console for troubleshooting.
 
 ## Card Actions

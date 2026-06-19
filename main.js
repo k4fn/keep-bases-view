@@ -307,9 +307,34 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	get currentCardWidth() {
-		if (document.body.classList.contains("is-phone")) return this._cardWidthMobile;
+		return this._getResponsiveCardWidth();
+	}
+
+	_getResponsiveCardWidth(contentWidth = null) {
+		if (document.body.classList.contains("is-phone")) {
+			if (this._usesMobileTwoColumnLayout()) {
+				const metrics = this._getMobileTwoColumnMetrics(contentWidth);
+				if (metrics) return metrics.cardWidth;
+			}
+			return this._cardWidthMobile;
+		}
 		if (document.body.classList.contains("is-tablet")) return this._cardWidthTablet;
 		return this._cardWidthPc;
+	}
+
+	_usesMobileTwoColumnLayout() {
+		return document.body.classList.contains("is-phone") && this.plugin?.settings?.mobileTwoColumnLayout === true;
+	}
+
+	_getMobileTwoColumnMetrics(contentWidth = null) {
+		if (!this._usesMobileTwoColumnLayout()) return null;
+		const rawWidth = contentWidth ?? this._getVirtualContentWidth();
+		if (rawWidth <= 1) return null;
+		const availableWidth = Math.max(1, rawWidth);
+		const gap = this._masonryGap;
+		const cardWidth = Math.max(1, Math.floor((availableWidth - gap) / 2));
+		const offsetX = 0;
+		return { availableWidth, cardWidth, columnCount: 2, offsetX };
 	}
 
 	render() {
@@ -345,6 +370,7 @@ class KeepGridView extends obsidian.BasesView {
 		this._contentEl.empty();
 		this._scrollEl.addClass("kg-no-animations");
 		requestAnimationFrame(() => requestAnimationFrame(() => this._scrollEl.removeClass("kg-no-animations")));
+		this._scrollEl.classList.toggle("kg-mobile-two-column", this._usesMobileTwoColumnLayout());
 		this._scrollEl.style.setProperty("--kg-card-width", `${this.currentCardWidth}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-row-height", `${this._masonryRowHeight}px`);
 		this._scrollEl.style.setProperty("--kg-masonry-gap", `${this._masonryGap}px`);
@@ -406,8 +432,10 @@ class KeepGridView extends obsidian.BasesView {
 			return;
 		}
 		const gap = this._masonryGap;
-		const cardWidth = Math.max(1, Math.min(this.currentCardWidth, contentWidth));
-		const columnCount = Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
+		const mobileMetrics = this._getMobileTwoColumnMetrics(contentWidth);
+		const cardWidth = mobileMetrics?.cardWidth ?? Math.max(1, Math.min(this._getResponsiveCardWidth(contentWidth), contentWidth));
+		const columnCount = mobileMetrics?.columnCount ?? Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
+		const offsetX = mobileMetrics?.offsetX ?? 0;
 		const shouldHideUntilPositioned = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (shouldHideUntilPositioned) this._scrollEl.addClass("kg-layout-pending");
 		this._virtual.width = contentWidth;
@@ -426,7 +454,7 @@ class KeepGridView extends obsidian.BasesView {
 				for (let i = 1; i < columns.length; i++) {
 					if (columns[i] < columns[column]) column = i;
 				}
-				const x = column * (cardWidth + gap);
+				const x = offsetX + column * (cardWidth + gap);
 				const y = columns[column];
 				columns[column] += height + gap;
 				return { entry, fm, cache, index, key: `${section.id}:${entry.file.path}`, x, y, height, measured: cachedHeight != null, column, mountedEl: null };
@@ -462,8 +490,9 @@ class KeepGridView extends obsidian.BasesView {
 		const width = this._getVirtualContentWidth();
 		if (width <= 1) return;
 		const gap = this._masonryGap;
-		const cardWidth = Math.max(1, Math.min(this.currentCardWidth, width));
-		const columnCount = Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
+		const mobileMetrics = this._getMobileTwoColumnMetrics(width);
+		const cardWidth = mobileMetrics?.cardWidth ?? Math.max(1, Math.min(this._getResponsiveCardWidth(width), width));
+		const columnCount = mobileMetrics?.columnCount ?? Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
 		const wasSingleColumn = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (wasSingleColumn || Math.abs(width - this._virtual.width) > 1 || Math.abs(cardWidth - this._virtual.cardWidth) > 1) {
 			this._layoutVirtualSections();
@@ -678,7 +707,7 @@ class KeepGridView extends obsidian.BasesView {
 		return [
 			entry.file?.path,
 			entry.file?.stat?.mtime ?? 0,
-			this.currentCardWidth,
+			this._virtual?.cardWidth ?? this.currentCardWidth,
 			this._cardMaxHeight,
 			this._basePreviewHeight,
 			this._showTags,
@@ -918,7 +947,7 @@ class KeepGridView extends obsidian.BasesView {
 
 	_getGridColumnWidth(gridEl) {
 		const gridWidth = gridEl.clientWidth || this._contentEl.clientWidth || this._scrollEl.clientWidth || this.currentCardWidth;
-		return Math.max(1, Math.min(this.currentCardWidth, gridWidth));
+		return Math.max(1, Math.min(this._getResponsiveCardWidth(gridWidth), gridWidth));
 	}
 
 	_scheduleResizeAnimation() {
@@ -1240,6 +1269,7 @@ class KeepGridView extends obsidian.BasesView {
 			this._cardWidthPc,
 			this._cardWidthTablet,
 			this._cardWidthMobile,
+			this.plugin?.settings?.mobileTwoColumnLayout === true,
 			this._showTags,
 			this._showPinned,
 			this._imageFit,
@@ -2116,6 +2146,17 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				}));
 
 		new obsidian.Setting(containerEl)
+			.setName("Mobile two-column layout")
+			.setDesc("On phone layouts, show cards in two columns and ignore the Mobile card width view option. Foldable devices follow Obsidian's phone/tablet mode.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.mobileTwoColumnLayout === true)
+				.onChange(async value => {
+					this.plugin.settings.mobileTwoColumnLayout = value;
+					await this.plugin.saveSettings();
+					this.plugin.refreshKeepViews();
+				}));
+
+		new obsidian.Setting(containerEl)
 			.setName("Enable performance logging")
 			.setDesc("Log slow Keep Bases View operations to the developer console for performance analysis.")
 			.addToggle(toggle => toggle
@@ -2203,13 +2244,28 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
-			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true },
+			{
+				specificBaseFilePath: "",
+				openInPopup: true,
+				popupWidth: 800,
+				enablePerformanceLogging: false,
+				enableAnimation: true,
+				mobileTwoColumnLayout: false,
+			},
 			await this.loadData()
 		);
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	refreshKeepViews() {
+		this.app.workspace.iterateAllLeaves(leaf => {
+			const view = leaf.view;
+			if (view?.type !== KEEP_VIEW_TYPE) return;
+			if (typeof view.onDataUpdated === "function") view.onDataUpdated();
+		});
 	}
 }
 
