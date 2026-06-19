@@ -307,9 +307,28 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	get currentCardWidth() {
+		if (this._isMobileEvenColumns()) {
+			const w = this._getMobileEvenCardWidth();
+			if (w > 0) return w;
+		}
 		if (document.body.classList.contains("is-phone")) return this._cardWidthMobile;
 		if (document.body.classList.contains("is-tablet")) return this._cardWidthTablet;
 		return this._cardWidthPc;
+	}
+
+	_isMobileEvenColumns() {
+		if (this.plugin?.settings?.mobileEvenColumns !== true) return false;
+		return document.body.classList.contains("is-phone") || document.body.classList.contains("is-mobile");
+	}
+
+	_getMobileEvenCardWidth() {
+		const contentWidth = this._getVirtualContentWidth();
+		if (contentWidth <= 1) return 0;
+		const gap = this._masonryGap;
+		// cardWidth = (contentWidth - gap) / 2
+		// This makes: left padding (container) = gap, gap between cards = gap, right padding (container) = gap
+		// Container padding is set via CSS variable --kg-mobile-even-padding
+		return Math.max(80, Math.floor((contentWidth - gap) / 2));
 	}
 
 	render() {
@@ -406,8 +425,19 @@ class KeepGridView extends obsidian.BasesView {
 			return;
 		}
 		const gap = this._masonryGap;
-		const cardWidth = Math.max(1, Math.min(this.currentCardWidth, contentWidth));
-		const columnCount = Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
+		const mobileEven = this._isMobileEvenColumns();
+		let cardWidth, columnCount;
+		if (mobileEven) {
+			columnCount = 2;
+			cardWidth = Math.max(80, Math.floor((contentWidth - gap) / 2));
+			const scrollbarW = this._scrollEl.offsetWidth - this._scrollEl.clientWidth;
+			this._scrollEl.style.setProperty("--kg-scrollbar-width", `${scrollbarW}px`);
+			this._scrollEl.classList.add("kg-mobile-even");
+		} else {
+			cardWidth = Math.max(1, Math.min(this.currentCardWidth, contentWidth));
+			columnCount = Math.max(1, Math.floor((contentWidth + gap - 1) / (cardWidth + gap)));
+			this._scrollEl.classList.remove("kg-mobile-even");
+		}
 		const shouldHideUntilPositioned = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (shouldHideUntilPositioned) this._scrollEl.addClass("kg-layout-pending");
 		this._virtual.width = contentWidth;
@@ -462,8 +492,14 @@ class KeepGridView extends obsidian.BasesView {
 		const width = this._getVirtualContentWidth();
 		if (width <= 1) return;
 		const gap = this._masonryGap;
-		const cardWidth = Math.max(1, Math.min(this.currentCardWidth, width));
-		const columnCount = Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
+		let cardWidth, columnCount;
+		if (this._isMobileEvenColumns()) {
+			columnCount = 2;
+			cardWidth = Math.max(80, Math.floor((width - gap) / 2));
+		} else {
+			cardWidth = Math.max(1, Math.min(this.currentCardWidth, width));
+			columnCount = Math.max(1, Math.floor((width + gap - 1) / (cardWidth + gap)));
+		}
 		const wasSingleColumn = this._virtual.columnCount <= 1 && columnCount > 1;
 		if (wasSingleColumn || Math.abs(width - this._virtual.width) > 1 || Math.abs(cardWidth - this._virtual.cardWidth) > 1) {
 			this._layoutVirtualSections();
@@ -2116,6 +2152,16 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				}));
 
 		new obsidian.Setting(containerEl)
+			.setName("Mobile: even 2-column layout")
+			.setDesc("On mobile, always show 2 columns with equal left, gap, and right spacing. Overrides the mobile card width setting.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.mobileEvenColumns === true)
+				.onChange(async value => {
+					this.plugin.settings.mobileEvenColumns = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new obsidian.Setting(containerEl)
 			.setName("Enable performance logging")
 			.setDesc("Log slow Keep Bases View operations to the developer console for performance analysis.")
 			.addToggle(toggle => toggle
@@ -2203,7 +2249,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
-			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true },
+			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true, mobileEvenColumns: false },
 			await this.loadData()
 		);
 	}
