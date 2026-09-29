@@ -493,15 +493,17 @@ body.is-mobile .kg-container {
 	margin: 4px 0;
 	overflow: hidden;
 	border-radius: 5px;
-	background: var(--background-secondary);
 }
 
 .kg-lite-image {
 	display: block;
 	max-width: 100%;
-	max-height: 150px;
 	width: 100%;
-	object-fit: contain;
+	height: auto;
+}
+
+.kg-card-body.kg-card-body .kg-lite-image {
+	margin: 0;
 }
 
 .kg-lite-image-missing {
