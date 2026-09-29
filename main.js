@@ -215,6 +215,7 @@ class KeepGridView extends obsidian.BasesView {
 		this._showPinned = cfg?.get("showPinned") !== false;
 		this._imageFit = String(cfg?.get("imageFit") ?? "cover");
 		this._showBasePreview = cfg?.get("showBasePreview") !== false;
+		this._previewImages = cfg?.get("previewImages") !== false;
 		this._cardMaxHeight = Number(cfg?.get("cardMaxHeight") ?? 320);
 		this._basePreviewHeight = Number(cfg?.get("basePreviewHeight") ?? 150);
 	}
@@ -283,6 +284,12 @@ class KeepGridView extends obsidian.BasesView {
 				displayName: "Preview .base file contents",
 				type: "toggle",
 				key: "showBasePreview",
+				default: true,
+			},
+			{
+				displayName: "Preview images in cards",
+				type: "toggle",
+				key: "previewImages",
 				default: true,
 			},
 			{
@@ -635,10 +642,15 @@ class KeepGridView extends obsidian.BasesView {
 				cardEl._keepBodyEl = null;
 			}
 			this._updateBodyFade(cardEl);
+			if (cardEl.querySelector("img")) {
+				for (const img of cardEl.querySelectorAll("img")) img.loading = "eager";
+				await this._waitForPreviewImages(cardEl, 5000);
+			}
 			if (item.entry.file.extension === "base" || cardEl.querySelector("img")) {
 				await this._waitForVirtualMeasurePaint();
 				if (token !== this._renderToken) return;
 			}
+			this._updateBodyFade(cardEl);
 			const measured = this._measureTightCardHeight(cardEl);
 			if (!Number.isFinite(measured) || measured <= 0) return;
 			item.height = measured;
@@ -718,11 +730,12 @@ class KeepGridView extends obsidian.BasesView {
 			this._cardMaxHeight,
 			this._basePreviewHeight,
 			this._showTags,
+			this._previewImages,
 			this._imagePropertyId ?? "",
 			this._cardTitlePropertyId ?? "",
 			(this.data?.properties ?? []).join(","),
 			this._getVirtualPreviewLines(),
-			"fixed-before-mount-v4",
+			"image-natural-height-v1",
 		].join("\u001f");
 	}
 
@@ -1280,6 +1293,7 @@ class KeepGridView extends obsidian.BasesView {
 			this._showPinned,
 			this._imageFit,
 			this._showBasePreview,
+			this._previewImages,
 			this._cardMaxHeight,
 			this._basePreviewHeight,
 			...(this.data?.properties ?? []),
@@ -1669,7 +1683,8 @@ class KeepGridView extends obsidian.BasesView {
 			if (image) {
 				renderableLines++;
 				if (renderedLines < maxLines) {
-					this._renderPreviewImage(bodyEl, image);
+					if (this._previewImages) this._renderPreviewImage(bodyEl, image);
+					else bodyEl.createDiv({ cls: "kg-lite-line", text: line.trim() });
 					renderedLines++;
 				}
 				continue;
@@ -1845,7 +1860,7 @@ class KeepGridView extends obsidian.BasesView {
 	_readPreviewImage(line, cardEl) {
 		const wiki = line.match(/^!\[\[([^\]]+)]]/);
 		const markdown = line.match(/^!\[[^\]]*]\(([^)]+)\)/);
-		const raw = wiki?.[1] ?? markdown?.[1];
+		const raw = wiki ? wiki[1].split("|", 1)[0].split("#", 1)[0].trim() : markdown?.[1];
 		if (!raw) return null;
 
 		const filePath = cardEl?._keepEntry?.file?.path ?? "";
