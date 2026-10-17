@@ -118,7 +118,6 @@ body.is-mobile .kg-container {
 	top: 0;
 	left: 0;
 	height: auto;
-	will-change: transform;
 	content-visibility: visible;
 	contain: layout paint style;
 }
@@ -377,6 +376,7 @@ body.is-mobile .kg-container {
 }
 
 .kg-card-body.kg-card-body-base {
+	height: var(--kg-base-preview-height, 150px);
 	max-height: var(--kg-base-preview-height, 150px);
 }
 
@@ -696,8 +696,7 @@ body.is-mobile .kg-container {
 }
 
 /* ライトテーマ: 白背景を視覚的に透かす（乗算ブレンド） */
-.theme-light .kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed,
-.theme-light .kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed * {
+.theme-light .kg-card-body.kg-card-body-base.kg-card-body-base .internal-embed {
 	mix-blend-mode: multiply;
 }
 
@@ -1029,4 +1028,41 @@ body.is-mobile .kg-container {
 .modal.kg-edit-modal .markdown-source-view.mod-cm6 .cm-content {
 	max-width: 100%;
 	padding-right: 8px;
+}
+
+/* Keep interactions available while suppressing scroll-induced hover work. */
+.kg-container.kg-scrolling .kg-card:hover {
+	box-shadow: none;
+	border-color: var(--kg-card-border, var(--background-modifier-border));
+}
+.kg-container.kg-scrolling .kg-card-actions,
+.kg-container.kg-scrolling .kg-pin-btn:not(.is-pinned) {
+	opacity: 0;
+	transition: none;
+}
+.kg-container.kg-scrolling .kg-pin-btn.is-pinned {
+	opacity: 0.6;
+	transition: none;
+}
+.kg-measuring-status {
+	position: fixed;
+	bottom: 24px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 30;
+	padding: 8px 14px;
+	border-radius: 8px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+	pointer-events: none;
+}
+.kg-measuring-status[hidden] { display: none; }
+.kg-lite-image-wrap[style*="aspect-ratio"] { position: relative; }
+.kg-lite-image-wrap[style*="aspect-ratio"] > .kg-lite-image {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: auto;
+	object-fit: contain;
 }

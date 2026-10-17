@@ -1,0 +1,11 @@
+{
+  "name": "keep-bases-view",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "check": "node --check main.js"
+  },
+  "devDependencies": {
+    "jsdom": "^27.4.0"
+  }
+}
