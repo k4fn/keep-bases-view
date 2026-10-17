@@ -615,6 +615,23 @@ class KeepGridView extends obsidian.BasesView {
 		section.gridEl.appendChild(cardEl);
 		this._virtual.mounted.set(item.key, cardEl);
 		item.mountedEl = cardEl;
+		const origin = item._kgResizeOrigin;
+		delete item._kgResizeOrigin;
+		if (origin && origin.epoch === this._layoutEpoch && this.plugin.settings.enableAnimation !== false) {
+			const top = this._scrollEl.scrollTop, bottom = top + this._scrollEl.clientHeight;
+			const newTop = section.top + item.y;
+			if ((origin.top + origin.height >= top && origin.top <= bottom) || (newTop + item.height >= top && newTop <= bottom)) {
+				const from = `translate3d(${origin.x}px, ${origin.top - section.top}px, 0)`;
+				const to = cardEl._kgVirtualTransform;
+				if (from !== to) {
+					const anim = cardEl.animate([{ transform: from }, { transform: to }], { duration: 220, easing: "ease", fill: "none" });
+				cardEl._kgReflowAnimation = anim;
+				const done = () => { if (cardEl._kgReflowAnimation === anim) cardEl._kgReflowAnimation = null; };
+					anim.onfinish = done;
+					anim.oncancel = done;
+				}
+			}
+		}
 		if (item.fm?.keep_pinned === true || item.fm?.keep_pinned === "true") cardEl._kgEnsureButtons?.(false);
 		if (item.entry.file.extension === "base" && this._showBasePreview) void this._loadCardBody(cardEl, this._renderToken, { mode: "upgrade" });
 		return cardEl;
@@ -826,15 +843,31 @@ class KeepGridView extends obsidian.BasesView {
 				// Step 1: Capture each card's current logical position (= last layout target)
 				// Using _kgVirtualTransform avoids reading mid-animation style.transform values.
 				const oldTransforms = new Map();
+				const resizeOrigins = new Map();
+				// Measurement can span several resize frames. Preserve pending origins
+				// even when their old DOM has already been removed. Include measured
+				// overscan cards that may enter the viewport after the reflow.
+				for (const section of this._virtual.sections) {
+					for (const item of section.items) {
+						if (item._kgResizeOrigin) resizeOrigins.set(item, item._kgResizeOrigin);
+						else if (item.measured) resizeOrigins.set(item, { x: item.x, top: section.top + item.y, height: item.height });
+					}
+				}
 				for (const [, cardEl] of this._virtual.mounted) {
 					if (!cardEl.isConnected) continue;
 					const item = cardEl._kgVirtualItem;
 					cardEl._kgOldTop = item.y + this._virtual.sections.find(section => section.items[item.index] === item).top;
+					resizeOrigins.set(item, { x: item.x, top: cardEl._kgOldTop, height: item.height });
 					oldTransforms.set(cardEl, cardEl._kgVirtualTransform ?? cardEl.style.transform);
 				}
 
 				// Step 2: Apply new layout (updates _kgVirtualTransform + style.transform for all cards)
 				this._layoutVirtualSections();
+				// Width-dependent measurement may replace the DOM. Carry the old
+				// position to the replacement once its new height is confirmed.
+				for (const [item, origin] of resizeOrigins) {
+					if (!item.mountedEl?.isConnected) item._kgResizeOrigin = { ...origin, epoch: this._layoutEpoch };
+				}
 				this._renderVirtualWindow();
 
 				// Step 3: For each card whose position changed, start a Web Animation.
