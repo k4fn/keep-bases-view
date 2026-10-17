@@ -3,7 +3,7 @@
 ## 1. 背景と目的
 
 - **課題**: スマートフォンやiPadでは軽快に動作するが、PC（デスクトップ版Obsidian）で大量のカードを表示した際、スクロール時のカクつき（ジャンク）や全体的な動作の重さが発生する。
-- **目的**: [REQUIREMENTS.md](file:///C:/Users/kyoma/orca/workspaces/keep-bases-view/main-2/REQUIREMENTS.md) および [README.md](file:///C:/Users/kyoma/orca/workspaces/keep-bases-view/main-2/README.md) に定義された既存仕様・見た目・機能を一切損なうことなく、PC環境での大量カード表示・スクロール・リサイズ性能を軽量化する。
+- **目的**: [REQUIREMENTS.md](REQUIREMENTS.md) および [README.md](file:///C:/Users/kyoma/orca/workspaces/keep-bases-view/main-2/README.md) に定義された既存仕様・見た目・機能を一切損なうことなく、PC環境での大量カード表示・スクロール・リサイズ性能を軽量化する。
 - **最重要の品質要件（合意事項）**:
   1. **位置ズレの100%防止**: 一度位置が確定して画面にマウントされたカードが、後から画像や `.base` の読み込み完了、あるいは先行カードの遅延計測によって再計算され、画面上で再度動く（ガタつく・列が変わる・位置ズレする）ような挙動を100%防止すること。
   2. **本文内画像の見た目変化の100%防止**: 本文内画像（`.kg-lite-image`）をタイムアウトで16:9等の固定枠に縮小・切り抜きするのではなく、読み込み完了（`load` / `error`）まで待ってから本来の自然な縦横比（`width: 100%; height: auto`）で高さを確定させることで、「位置ズレ」も「通信速度による見た目の変化」も100%防ぐこと。

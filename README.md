@@ -68,7 +68,7 @@ Desktop cards also show hover controls for pin, color, and delete.
 
 ## Development checks
 
-Run `npm ci`, `npm test`, and `npm run check`. See [performance validation](docs/performance-validation.md) for automated coverage, diagnostic logs, and the remaining Obsidian benchmark procedure.
+Run `npm ci`, `npm test`, and `npm run check`. See [current requirements](docs/REQUIREMENTS.md) for the implemented behavior and [performance validation](docs/performance-validation.md) for automated coverage, diagnostic logs, and the remaining Obsidian benchmark procedure.
 
 ## Commands
 
