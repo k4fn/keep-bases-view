@@ -66,6 +66,10 @@ Right-click a card on desktop, or long-press on mobile, to access:
 
 Desktop cards also show hover controls for pin, color, and delete.
 
+## Development checks
+
+Run `npm ci`, `npm test`, and `npm run check`. See [current requirements](docs/REQUIREMENTS.md) for the implemented behavior and [performance validation](docs/performance-validation.md) for automated coverage, diagnostic logs, and the remaining Obsidian benchmark procedure.
+
 ## Commands
 
 - **Open a .base file** - Fuzzy search and open any `.base` file in the vault.

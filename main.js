@@ -6,21 +6,28 @@ const KEEP_VIEW_TYPE = "keep-grid-view";
 const HOVER_SOURCE = "keep-bases-view";
 const DEBOUNCE_MS = 50;
 
+function lruSet(cache, key, value, limit) {
+	cache.delete(key); cache.set(key, value);
+	while (cache.size > limit) cache.delete(cache.keys().next().value);
+}
+
 function extractBodyMarkdownInfo(content, maxLines = 25, maxChars = 1000) {
 	let body = content;
 	if (body.startsWith("---")) {
 		const end = body.indexOf("\n---", 3);
-		if (end !== -1) body = body.slice(end + 4).trimStart();
+		if (end !== -1) body = body.slice(end + 4);
+		if (end !== -1) { let first = 0; while (first < body.length && /\s/.test(body[first])) first++; body = body.slice(first); }
 	}
-	if (!body.trim()) return { markdown: null, truncated: false };
-
-	const lines = body.split("\n");
-	const kept = lines.slice(0, maxLines).join("\n");
-	const result = kept.length > maxChars ? kept.slice(0, maxChars) : kept;
-	return {
-		markdown: result.trim() || null,
-		truncated: lines.length > maxLines || kept.length > maxChars,
-	};
+	let pos = 0, lines = 1;
+	const limit = Math.min(body.length, maxChars);
+	while (lines <= maxLines) {
+		const next = body.indexOf("\n", pos);
+		if (next < 0 || next >= limit) { pos = limit; break; }
+		if (lines === maxLines) { pos = next; break; }
+		pos = next + 1;
+		lines++;
+	}
+	return { markdown: body.slice(0, pos).trim() || null, truncated: pos < body.length };
 }
 
 function extractBodyMarkdown(content, maxLines = 25, maxChars = 1000) {
@@ -41,9 +48,8 @@ function valueToString(value) {
 	return value.toString?.().trim?.() ?? "";
 }
 
-function resolveImageSrc(raw, filePath, app) {
-	if (!raw) return null;
-	if (/^https?:\/\//i.test(raw)) return raw;
+function resolveImageFile(raw, filePath, app) {
+	if (!raw || /^https?:\/\//i.test(raw)) return null;
 
 	let linkText = raw.replace(/^!\s*/, "");
 	const wiki = linkText.match(/^\[\[([^\]|#]+)(?:[|#][^\]]*)?]]/);
@@ -57,7 +63,14 @@ function resolveImageSrc(raw, filePath, app) {
 		const direct = app.vault.getAbstractFileByPath(obsidian.normalizePath(linkText));
 		if (direct instanceof obsidian.TFile) imgFile = direct;
 	}
-	return imgFile ? app.vault.getResourcePath(imgFile) : null;
+	return imgFile instanceof obsidian.TFile ? imgFile : null;
+}
+
+function resolveImageSrc(raw, filePath, app) {
+	if (!raw) return null;
+	if (/^https?:\/\//i.test(raw)) return raw;
+	const file = resolveImageFile(raw, filePath, app);
+	return file ? app.vault.getResourcePath(file) : null;
 }
 
 function escapeWikiLinkPath(path) {
@@ -81,33 +94,35 @@ class KeepGridView extends obsidian.BasesView {
 		this._renderToken = 0;
 		this._masonryRowHeight = 4;
 		this._masonryGap = 8;
-		this._previewQueue = [];
-		this._queuedPreviewCards = new Set();
-		this._activePreviewLoads = 0;
-		this._maxPreviewLoads = 2;
-		this._eagerPreviewCardsPerSection = 48;
-		this._previewQueueLimit = 96;
 		this._previewScrollTicking = false;
-		this._previewProcessScheduled = false;
-		this._scrollTickCount = 0;
 		this._lastScrollTop = this._scrollEl.scrollTop || 0;
 		this._scrollDirection = 1;
-		this._trackedCards = [];
-		this._visibleCards = new Set();
 		this._virtual = null;
-		this._virtualTicking = false;
-		this._virtualOverscan = 2600;
-		this._measureQueue = [];
-		this._queuedMeasureKeys = new Set();
-		this._activeMeasureLoads = 0;
-		this._maxMeasureLoads = 2;
+		this._layoutEpoch = 0;
+		this._batchRun = null;
+		this._statusEl = scrollEl.createDiv({ cls: "kg-measuring-status" });
+		this._statusEl.setAttribute("role", "status");
+		this._statusEl.hidden = true;
+		plugin._views.add(this);
+		this._delegatedHandlers = {};
+		for (const type of ["click", "contextmenu", "mouseover"]) {
+			const handler = event => {
+				const card = event.target.closest?.(".kg-card");
+				if (!card || !this._contentEl.contains(card)) return;
+				if (type === "mouseover" && this._scrolling) return;
+				if (type === "mouseover") card._kgEnsureButtons?.();
+				const action = type === "click" ? event.target.closest?.("[data-kg-action]") : null;
+				if (action) { event.stopPropagation(); void card._kgActions?.[action.dataset.kgAction]?.(event); return; }
+				card._kgHandlers?.[type]?.(event);
+			};
+			this._delegatedHandlers[type] = handler;
+			this._contentEl.addEventListener(type, handler);
+		}
+		this._rememberPointer = event => { this._lastClientX = event.clientX; this._lastClientY = event.clientY; };
+		this._scrollEl.addEventListener("pointermove", this._rememberPointer, { passive: true });
+		this._scrollEl.addEventListener("wheel", this._rememberPointer, { passive: true });
 		this._lastLayoutWidth = 0;
-		this._lastMeasuredCardWidth = 0;
-		this._lastCardRects = new Map();
 		this._resizeTicking = false;
-		this._sections = [];
-		this._isAppendingCards = false;
-		this._appendScheduled = false;
 		this._scrollRestoreKey = null;
 		this._lastSavedScrollTop = null;
 		this._localScrollTop = null;
@@ -125,6 +140,15 @@ class KeepGridView extends obsidian.BasesView {
 		this._basePreviewHeight = 150;
 
 		this._onScroll = () => {
+			this._scrolling = true;
+			this._scrollEl.addClass("kg-scrolling");
+			clearTimeout(this._scrollStopTimer);
+			this._scrollStopTimer = setTimeout(() => {
+				this._scrolling = false;
+				this._scrollEl.removeClass("kg-scrolling");
+				const card = document.elementFromPoint(this._lastClientX ?? -1, this._lastClientY ?? -1)?.closest?.(".kg-card");
+				if (card && this._contentEl.contains(card)) card._kgEnsureButtons?.();
+			}, 120);
 			if (this._previewScrollTicking) return;
 			this._previewScrollTicking = true;
 			requestAnimationFrame(() => {
@@ -135,30 +159,11 @@ class KeepGridView extends obsidian.BasesView {
 				this._saveScrollPosition(scrollTop, false);
 				if (this._virtual) {
 					this._renderVirtualWindow();
-				} else {
-					this._appendCardsNearViewport();
-					this._queueVisiblePreviews();
 				}
-				this._scrollTickCount++;
 			});
 		};
 		this._scrollEl.addEventListener("scroll", this._onScroll, { passive: true });
 
-		this._previewObserver = new IntersectionObserver(entries => {
-			for (const entry of entries) {
-				if (entry.isIntersecting) {
-					this._visibleCards.add(entry.target);
-					const rootBounds = entry.rootBounds ?? this._scrollEl.getBoundingClientRect();
-					const isActuallyVisible = entry.boundingClientRect.bottom >= rootBounds.top && entry.boundingClientRect.top <= rootBounds.bottom;
-					this._queuePreview(entry.target, isActuallyVisible);
-				} else {
-					this._visibleCards.delete(entry.target);
-				}
-			}
-		}, {
-			root: this._scrollEl,
-			rootMargin: "2200px 0px",
-		});
 
 		this._resizeObserver = new ResizeObserver(entries => {
 			const width = this._getVirtualContentWidth();
@@ -171,7 +176,6 @@ class KeepGridView extends obsidian.BasesView {
 			this._scheduleResizeAnimation();
 		});
 		this._resizeObserver.observe(this._scrollEl);
-		this._resizeObserver.observe(this._contentEl);
 
 		this._debouncedRender = obsidian.debounce(() => {
 			try {
@@ -186,9 +190,8 @@ class KeepGridView extends obsidian.BasesView {
 		if (!this.plugin?.settings?.enablePerformanceLogging) return;
 		console.log("[KeepBasesView perf]", label, {
 			...data,
-			tracked: this._trackedCards.length,
-			visible: this._visibleCards.size,
-			queue: this._previewQueue.length,
+			mounted: this._virtual?.mounted.size ?? 0,
+			domNodes: this._scrollEl.querySelectorAll("*").length,
 		});
 	}
 
@@ -197,9 +200,18 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	onClose() {
+		this._renderToken++;
+		this._layoutEpoch++;
+		this._virtual = null;
+		this.plugin._views.delete(this);
+		clearTimeout(this._scrollStopTimer);
+		this._scrollEl.removeClass("kg-restoring-scroll", "kg-scrolling");
+		this._statusEl.remove();
+		for (const [type, handler] of Object.entries(this._delegatedHandlers)) this._contentEl.removeEventListener(type, handler);
+		this._scrollEl.removeEventListener("pointermove", this._rememberPointer);
+		this._scrollEl.removeEventListener("wheel", this._rememberPointer);
 		this._clearSavedScrollPosition();
 		this._debouncedRender.cancel();
-		this._previewObserver.disconnect();
 		this._resizeObserver.disconnect();
 		this._scrollEl.removeEventListener("scroll", this._onScroll);
 	}
@@ -343,9 +355,12 @@ class KeepGridView extends obsidian.BasesView {
 		const entries = this.data?.data ?? [];
 
 		const signature = this._getRenderSignature(entries);
-		if (this._renderSignature === signature) return;
+		if (this._renderSignature === signature && !this._virtual?.sections.some(section => section.items.some(item =>
+			item.readFailed || (item.expiresAt && item.expiresAt <= Date.now()) || !this._isImageLocksValid(item.imageLocks, item.entry.file.path)))) return;
 
 		const token = ++this._renderToken;
+		this._layoutEpoch++;
+		this._statusEl.hidden = true;
 		const scrollKey = this._getScrollKey(entries);
 		this._scrollRestoreKey = scrollKey;
 		const savedRecord = this.plugin?._scrollPositions?.get(scrollKey);
@@ -355,18 +370,6 @@ class KeepGridView extends obsidian.BasesView {
 		const previousScrollTop = savedScrollTop ?? this._scrollEl.scrollTop;
 		this._renderSignature = signature;
 
-		this._previewObserver.disconnect();
-		this._previewQueue = [];
-		this._queuedPreviewCards.clear();
-		this._measureQueue = [];
-		this._queuedMeasureKeys.clear();
-		this._activeMeasureLoads = 0;
-		this._trackedCards = [];
-		this._visibleCards.clear();
-		this._scrollTickCount = 0;
-		this._sections = [];
-		this._isAppendingCards = false;
-		this._appendScheduled = false;
 		this._scrollEl.classList.toggle("kg-restoring-scroll", shouldRestoreSavedScroll);
 		this._contentEl.empty();
 		this._scrollEl.addClass("kg-no-animations");
@@ -388,6 +391,9 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	_renderVirtual(entries, token, targetScrollTop, restoring) {
+		this._renderStartedAt = performance.now();
+		this._frameStats = null;
+		this._layoutPasses = 0;
 		const { pinned, normal } = this._splitEntries(entries);
 		const sections = [];
 		if (pinned.length > 0) sections.push({ label: "Pinned", entries: pinned });
@@ -416,16 +422,17 @@ class KeepGridView extends obsidian.BasesView {
 			});
 		}
 
+		this._virtual.targetScrollTop = targetScrollTop || 0;
+		this._virtual.restoring = restoring;
 		this._layoutVirtualSections();
 		this._scrollEl.scrollTop = Math.min(targetScrollTop || 0, Math.max(0, this._scrollEl.scrollHeight - this._scrollEl.clientHeight));
 		this._renderVirtualWindow();
-		this._scheduleVirtualRelayoutChecks();
-		if (restoring) requestAnimationFrame(() => this._scrollEl.removeClass("kg-restoring-scroll"));
-		else this._scrollEl.removeClass("kg-restoring-scroll");
+		if (this._virtual.width <= 1) this._scheduleVirtualRelayoutChecks();
 	}
 
 	_layoutVirtualSections() {
 		if (!this._virtual) return;
+		this._layoutPasses++;
 		const contentWidth = this._getVirtualContentWidth();
 		if (contentWidth <= 1) {
 			this._scrollEl.addClass("kg-layout-pending");
@@ -452,30 +459,46 @@ class KeepGridView extends obsidian.BasesView {
 		this._virtual.columnCount = columnCount;
 		this._scrollEl.style.setProperty("--kg-card-width", `${cardWidth}px`);
 
+		const configKey = [cardWidth, this._cardTitlePropertyId, this._imagePropertyId, this._imageFit,
+			this._cardMaxHeight, this._basePreviewHeight, this._showTags, this._showPinned,
+			this._showBasePreview, this._previewImages, this._getVirtualPreviewLines(),
+			(this.data?.properties ?? []).join("\u001e"), this.plugin._cssGeneration,
+			window.devicePixelRatio, getComputedStyle(this._scrollEl).fontSize].join("\u001f");
+		const changed = this._layoutConfigKey !== configKey;
+		if (changed) { this._layoutConfigKey = configKey; this._layoutEpoch++; }
 		for (const section of this._virtual.sections) {
-			const columns = Array.from({ length: columnCount }, () => 0);
-			section.items = section.entries.map((entry, index) => {
-				const fm = entry._cachedFm ?? {};
-				const cache = entry._cachedCache ?? {};
-				const cachedHeight = this._getCachedVirtualHeight(entry);
-				const height = cachedHeight ?? this._estimateCardHeight(entry, fm, cache);
-				let column = 0;
-				for (let i = 1; i < columns.length; i++) {
-					if (columns[i] < columns[column]) column = i;
-				}
-				const x = column * (cardWidth + gap);
-				const y = columns[column];
-				columns[column] += height + gap;
-				return { entry, fm, cache, index, key: `${section.id}:${entry.file.path}`, x, y, height, measured: cachedHeight != null, column, mountedEl: null };
-			});
-
-			section.height = Math.max(0, ...columns) || 0;
-			if (section.height > 0) section.height -= gap;
-			section.gridEl.style.height = `${section.height}px`;
-			section.gridEl.style.setProperty("--kg-card-width", `${cardWidth}px`);
+			if (!section.items.length) section.items = section.entries.map((entry, index) => ({
+				entry, fm: entry._cachedFm, cache: entry._cachedCache, index,
+				key: `${section.id}:${entry.file.path}`, entrySignature: this._entrySignature(entry),
+				estimatedHeight: this._estimateCardHeight(entry, entry._cachedFm, entry._cachedCache), measured: false,
+			}));
+			const columns = Array(columnCount).fill(0);
+			section.columns = Array.from({ length: columnCount }, () => []);
+			section.measuredPrefixEnd = -1;
 			for (const item of section.items) {
-				if (item.mountedEl?.isConnected) this._positionVirtualCard(item.mountedEl, item);
+				if (changed || item.height == null) {
+					item.preparedEl = null;
+					const cached = this._getLayoutCache(item);
+					Object.assign(item, cached ?? { height: item.estimatedHeight, measured: false, imageLocks: [] });
+					if (changed && item.mountedEl) {
+						item.mountedEl.remove(); this._virtual.mounted.delete(item.key); item.mountedEl = null;
+					}
+				}
+				if (item.measured && item.index === section.measuredPrefixEnd + 1) section.measuredPrefixEnd++;
+				let column = 0;
+				for (let i = 1; i < columns.length; i++) if (columns[i] < columns[column]) column = i;
+				item.column = column; item.x = column * (cardWidth + gap); item.y = columns[column];
+				columns[column] += item.height + gap;
+				section.columns[column].push(item);
 			}
+			section.height = Math.max(0, ...columns) - gap;
+			section.gridEl.style.height = `${Math.max(0, section.height)}px`;
+			section.gridEl.style.setProperty("--kg-card-width", `${cardWidth}px`);
+		}
+		// Read section offsets once after all layout writes, never in the scroll loop.
+		for (const section of this._virtual.sections) {
+			section.top = section.gridEl.offsetTop;
+			for (const item of section.items) if (item.mountedEl?.isConnected) this._positionVirtualCard(item.mountedEl, item);
 		}
 		this._scrollEl.removeClass("kg-layout-pending");
 	}
@@ -527,166 +550,205 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	_renderVirtualWindow() {
-		if (!this._virtual || this._renderToken !== this._virtual.token) return;
-		this._ensureVirtualLayoutFresh();
-		const rootTop = this._scrollEl.scrollTop;
-		const rootBottom = rootTop + this._scrollEl.clientHeight;
-		const overscan = this._virtualOverscan;
+		if (!this._virtual || this._renderToken !== this._virtual.token || this._virtual.width <= 1) return;
+		const started = performance.now();
+		const v = this._virtual;
+		const top = v.restoring ? v.targetScrollTop : this._scrollEl.scrollTop;
+		const bottom = top + this._scrollEl.clientHeight;
+		const overscan = Math.max(600, Math.min(1200, Math.round(2200 / Math.sqrt(v.columnCount))));
 		const keep = new Set();
-		const priorityCards = [];
-
-		for (const section of this._virtual.sections) {
-			const sectionTop = section.gridEl.offsetTop;
-			const minY = rootTop - overscan - sectionTop;
-			const maxY = rootBottom + overscan - sectionTop;
-
-			for (const item of section.items) {
-				if (item.y > maxY || item.y + item.height < minY) continue;
-				keep.add(item.key);
-				const cardTop = sectionTop + item.y;
-				const actuallyVisible = cardTop + item.height >= rootTop && cardTop <= rootBottom;
-				if (!item.measured) {
-					if (item.entry.file.extension !== "base" || actuallyVisible) this._queueVirtualMeasure(item, actuallyVisible);
-					continue;
+		let precedingComplete = true, waiting = false, visibleWaiting = false;
+		for (const section of v.sections) {
+			const minY = top - overscan - section.top, maxY = bottom + overscan - section.top;
+			if (precedingComplete) for (const column of section.columns) {
+				let lo = 0, hi = column.length;
+				while (lo < hi) { const mid = (lo + hi) >>> 1; if (column[mid].y + column[mid].height < minY) lo = mid + 1; else hi = mid; }
+				for (let i = lo; i < column.length && column[i].y <= maxY; i++) {
+					const item = column[i];
+					if (item.index > section.measuredPrefixEnd) { waiting = true; if (item.y + section.top <= bottom && item.y + section.top + item.height >= top) visibleWaiting = true; continue; }
+					keep.add(item.key);
+					if (!v.mounted.has(item.key)) this._mountVirtualCard(section, item);
 				}
-
-				let cardEl = this._virtual.mounted.get(item.key);
-				if (!cardEl) {
-					cardEl = this._mountVirtualCard(section, item);
-				} else {
-					cardEl._kgVirtualItem = item;
-					item.mountedEl = cardEl;
-					this._positionVirtualCard(cardEl, item);
-				}
-
-				if (actuallyVisible) priorityCards.push(cardEl);
-				else if (item.entry.file.extension !== "base") this._queuePreview(cardEl, false);
 			}
+			const first = section.items[section.measuredPrefixEnd + 1];
+			if (!precedingComplete && section.top <= bottom && section.top + section.height >= top) visibleWaiting = true;
+			if (first && section.top + first.y <= bottom + (this._scrollDirection >= 0 ? 2000 : 800)) waiting = true;
+			precedingComplete &&= !first;
 		}
-
-		for (const [key, cardEl] of this._virtual.mounted) {
-			if (keep.has(key)) continue;
-			this._queuedPreviewCards.delete(cardEl);
-			this._previewQueue = this._previewQueue.filter(item => item !== cardEl);
-			cardEl.remove();
-			this._virtual.mounted.delete(key);
+		for (const [key, card] of v.mounted) if (!keep.has(key)) {
+			card.remove(); card._kgVirtualItem.mountedEl = null; v.mounted.delete(key);
 		}
-
-		this._trackedCards = [...this._virtual.mounted.values()];
-		for (const cardEl of priorityCards) this._queuePreview(cardEl, true);
+		for (const item of v.preparedItems ?? []) {
+			if (item.preparedEl) { item.preparedEl.remove(); item.preparedEl = null; }
+		}
+		v.preparedItems = [];
+		this._statusEl.hidden = !(visibleWaiting || (v.restoring && waiting));
+		if (waiting) {
+			const done = v.sections.reduce((n, section) => n + section.measuredPrefixEnd + 1, 0);
+			this._statusEl.textContent = `Measuring cards... (${done} / ${v.sections.reduce((n, section) => n + section.items.length, 0)})`;
+			void this._processMeasureQueue();
+		} else if (v.restoring) {
+			this._scrollEl.scrollTop = v.targetScrollTop;
+			v.restoring = false;
+			this._scrollEl.removeClass("kg-restoring-scroll");
+			this._perfLog("scrollRestore", { elapsed: performance.now() - this._renderStartedAt, target: v.targetScrollTop, layoutPasses: this._layoutPasses });
+		}
+		if (!v.firstVisible && !visibleWaiting && v.mounted.size) {
+			v.firstVisible = true;
+			this._perfLog("firstVisible", { elapsed: performance.now() - this._renderStartedAt, layoutPasses: this._layoutPasses });
+		}
+		if (this.plugin.settings.enablePerformanceLogging) {
+			const elapsed = performance.now() - started;
+			const stats = this._frameStats ??= { count: 0, total: 0, max: 0 };
+			stats.count++; stats.total += elapsed; stats.max = Math.max(stats.max, elapsed);
+			this._perfLog("virtualWindow", { elapsed, average: stats.total / stats.count, max: stats.max, layoutPasses: this._layoutPasses });
+		}
 	}
 
 	_mountVirtualCard(section, item) {
-		const cardEl = this._createCard(item.entry, item.fm, item.cache);
+		const cardEl = item.preparedEl ?? this._buildMeasuredCard(item);
+		item.preparedEl = null;
+		cardEl.removeClass("kg-virtual-measuring");
 		cardEl.addClass("kg-virtual-card");
 		cardEl._kgVirtualItem = item;
-		cardEl._kgPreviewLoaded = false;
-		cardEl._kgNeedsMarkdownUpgrade = true;
-		cardEl.style.setProperty("--kg-preview-lines", String(this._getVirtualPreviewLines()));
 		this._positionVirtualCard(cardEl, item);
 		section.gridEl.appendChild(cardEl);
 		this._virtual.mounted.set(item.key, cardEl);
 		item.mountedEl = cardEl;
-		this._queuePreview(cardEl, true);
+		const origin = item._kgResizeOrigin;
+		delete item._kgResizeOrigin;
+		if (origin && origin.epoch === this._layoutEpoch && this.plugin.settings.enableAnimation !== false) {
+			const top = this._scrollEl.scrollTop, bottom = top + this._scrollEl.clientHeight;
+			const newTop = section.top + item.y;
+			if ((origin.top + origin.height >= top && origin.top <= bottom) || (newTop + item.height >= top && newTop <= bottom)) {
+				const from = `translate3d(${origin.x}px, ${origin.top - section.top}px, 0)`;
+				const to = cardEl._kgVirtualTransform;
+				if (from !== to) {
+					const anim = cardEl.animate([{ transform: from }, { transform: to }], { duration: 220, easing: "ease", fill: "none" });
+				cardEl._kgReflowAnimation = anim;
+				const done = () => { if (cardEl._kgReflowAnimation === anim) cardEl._kgReflowAnimation = null; };
+					anim.onfinish = done;
+					anim.oncancel = done;
+				}
+			}
+		}
+		if (item.fm?.keep_pinned === true || item.fm?.keep_pinned === "true") cardEl._kgEnsureButtons?.(false);
+		if (item.entry.file.extension === "base" && this._showBasePreview) void this._loadCardBody(cardEl, this._renderToken, { mode: "upgrade" });
 		return cardEl;
 	}
 
-	_queueVirtualMeasure(item, priority = false) {
-		if (!this._virtual || item.measured || item.measuring || this._queuedMeasureKeys.has(item.key)) return;
-		this._queuedMeasureKeys.add(item.key);
-		const task = { item, token: this._renderToken };
-		if (priority) this._measureQueue.unshift(task);
-		else this._measureQueue.push(task);
-		this._processMeasureQueue();
-	}
-
-	_processMeasureQueue() {
-		while (this._activeMeasureLoads < this._maxMeasureLoads && this._measureQueue.length > 0) {
-			const task = this._measureQueue.shift();
-			const { item, token } = task;
-			if (!this._virtual || token !== this._renderToken || item.measured || item.measuring) {
-				this._queuedMeasureKeys.delete(item.key);
-				continue;
-			}
-
-			item.measuring = true;
-			this._activeMeasureLoads++;
-			void this._measureVirtualItem(task)
-				.finally(() => {
-					item.measuring = false;
-					this._queuedMeasureKeys.delete(item.key);
-					this._activeMeasureLoads = Math.max(0, this._activeMeasureLoads - 1);
-					if (token === this._renderToken) this._processMeasureQueue();
-				});
-		}
-	}
-
-	async _measureVirtualItem({ item, token }) {
-		if (!this._virtual || token !== this._renderToken) return;
-		const cardEl = this._createCard(item.entry, item.fm, item.cache);
-		cardEl.addClass("kg-virtual-measuring");
-		cardEl._kgVirtualItem = item;
-		cardEl.style.width = `${this._virtual.cardWidth}px`;
-		cardEl.style.height = "auto";
-		cardEl.style.transform = "none";
-		cardEl.style.setProperty("--kg-preview-lines", String(this._getVirtualPreviewLines()));
-		this._measureEl.style.width = `${this._virtual.cardWidth}px`;
-		this._measureEl.appendChild(cardEl);
-
+	async _processMeasureQueue() {
+		if (this._batchRun) return;
+		const token = this._renderToken, epoch = this._layoutEpoch, v = this._virtual;
+		const run = {}; this._batchRun = run;
+		const valid = () => token === this._renderToken && epoch === this._layoutEpoch && v === this._virtual;
+		const cards = [];
+		const started = performance.now();
 		try {
-			const hasPreview = await this._loadCardBody(cardEl, token, { mode: "upgrade" });
-			if (token !== this._renderToken) return;
-			if (!hasPreview) {
-				cardEl.addClass("kg-no-preview");
-				cardEl._keepBodyEl?.remove();
-				cardEl._keepBodyEl = null;
+			const section = v.sections.find(section => section.measuredPrefixEnd + 1 < section.items.length);
+			if (!section) return;
+			const items = section.items.slice(section.measuredPrefixEnd + 1, section.measuredPrefixEnd + 41);
+			const results = await Promise.all(items.map(async item => {
+				try {
+					const source = /^(md|txt)$/.test(item.entry.file.extension) ? await this._getPreviewSource(item.entry.file, 25, 1000) : { markdown: null };
+					if (!valid()) return { item, source, imageLocks: [] };
+					const parsedBlocks = this._parsePreviewBlocks(source.markdown ?? "", item.entry);
+					const images = this._previewImages ? parsedBlocks.filter(block => block.type === "image").map(block => block.value) : [];
+					const locks = await Promise.all(images.map(async image => ({ ...image, ...await this._probeImageDimensions(image) })));
+					return { item, source, parsedBlocks, imageLocks: locks };
+				} catch (_) { return { item, source: { markdown: null }, imageLocks: [], readFailed: true }; }
+			}));
+			if (!valid()) return;
+			this._measureEl.style.width = `${v.cardWidth}px`;
+			const fragment = document.createDocumentFragment();
+			for (const result of results) {
+				let card;
+				try {
+					result.parsedBlocks ??= [];
+					card = this._buildMeasuredCard({ ...result.item, ...result });
+				} catch (_) {
+					result.source = { markdown: null }; result.parsedBlocks = []; result.readFailed = true;
+					card = this._buildMeasuredCard({ ...result.item, ...result });
+				}
+				card.addClass("kg-virtual-measuring"); card.style.width = `${v.cardWidth}px`;
+				fragment.appendChild(card); cards.push(card);
 			}
-			this._updateBodyFade(cardEl);
-			if (cardEl.querySelector("img")) {
-				for (const img of cardEl.querySelectorAll("img")) img.loading = "eager";
-				await this._waitForPreviewImages(cardEl, 5000);
+			this._measureEl.appendChild(fragment);
+			const readings = cards.map(card => ({
+				height: Math.ceil(card.getBoundingClientRect().height),
+				clipped: card._keepBodyEl?.scrollHeight > card._keepBodyEl?.clientHeight + 1 || card._keepBodyEl?.dataset.keepTruncated === "true",
+				wrapHeights: [...card.querySelectorAll(".kg-lite-image-wrap")].map(wrap => wrap.getBoundingClientRect().height),
+			}));
+			if (!valid()) return;
+			for (let i = 0; i < results.length; i++) {
+				const { item, ...result } = results[i];
+				Object.assign(item, result, { height: Math.max(1, readings[i].height), clipped: readings[i].clipped, measured: true, measuredEpoch: epoch });
+				cards[i].classList.toggle("kg-body-clipped", item.clipped);
+				item.imageLocks.forEach((lock, index) => { lock.wrapHeight = readings[i].wrapHeights[index]; });
+				const failed = item.imageLocks.filter(lock => lock.expiresAt);
+				item.expiresAt = failed.length ? Math.min(...failed.map(lock => lock.expiresAt)) : null;
+				if (!item.readFailed) lruSet(this.plugin._cardLayoutCache, this._layoutCacheKey(item), {
+					height: item.height, measured: true, clipped: item.clipped, parsedBlocks: item.parsedBlocks, source: item.source, imageLocks: item.imageLocks, expiresAt: item.expiresAt,
+				}, 10000);
+				item.preparedEl = cards[i];
 			}
-			if (item.entry.file.extension === "base" || cardEl.querySelector("img")) {
-				await this._waitForVirtualMeasurePaint();
-				if (token !== this._renderToken) return;
-			}
-			this._updateBodyFade(cardEl);
-			const measured = this._measureTightCardHeight(cardEl);
-			if (!Number.isFinite(measured) || measured <= 0) return;
-			item.height = measured;
-			item.measured = true;
-			this._setCachedVirtualHeight(item.entry, measured);
+			v.preparedItems = items;
 			this._layoutVirtualSections();
 			this._renderVirtualWindow();
+			this._perfLog("measureBatch", { elapsed: performance.now() - started, count: results.length, layoutPasses: this._layoutPasses });
 		} finally {
-			cardEl.remove();
+			for (const card of cards) if (card.parentElement === this._measureEl) card.remove();
+			if (this._batchRun === run) this._batchRun = null;
+			if (this._virtual && this._renderToken === this._virtual.token) requestAnimationFrame(() => this._renderVirtualWindow());
 		}
 	}
 
-	_waitForVirtualMeasurePaint() {
-		return new Promise(resolve => {
-			requestAnimationFrame(() => requestAnimationFrame(resolve));
-		});
+	_buildMeasuredCard(item) {
+		const card = this._createCard(item.entry, item.fm, item.cache);
+		card._kgVirtualItem = item;
+		card.style.setProperty("--kg-preview-lines", String(this._getVirtualPreviewLines()));
+		const body = card._keepBodyEl;
+		if (item.entry.file.extension === "base" && this._showBasePreview) {
+			body.style.display = ""; body.addClass("kg-card-body-base");
+			body.createDiv({ cls: "kg-base-placeholder", text: item.entry.file.path });
+		} else if (item.source?.markdown) {
+			body.style.display = ""; body.addClass("kg-lite-rendered");
+			const preview = this._renderLightweightPreview(body, item.source.markdown, card);
+			body.dataset.keepTruncated = item.source.truncated || preview.truncated ? "true" : "false";
+			if (!preview.renderedLines) { body.remove(); card.addClass("kg-no-preview"); }
+		} else { body.remove(); card.addClass("kg-no-preview"); }
+		card.classList.toggle("kg-body-clipped", Boolean(item.clipped));
+		return card;
 	}
 
-	_measureTightCardHeight(cardEl) {
-		const rect = cardEl.getBoundingClientRect();
-		const style = getComputedStyle(cardEl);
-		const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
-		const borderBottom = Number.parseFloat(style.borderBottomWidth) || 0;
-		let bottom = 0;
+	_layoutCacheKey(item) { return `${item.entrySignature}\u001f${this._layoutConfigKey}`; }
 
-		for (const child of Array.from(cardEl.children)) {
-			if (child.matches?.(".kg-pin-btn, .kg-card-actions")) continue;
-			const childStyle = getComputedStyle(child);
-			if (childStyle.position === "absolute" || childStyle.position === "fixed") continue;
-			const childRect = child.getBoundingClientRect();
-			bottom = Math.max(bottom, childRect.bottom - rect.top);
-		}
-
-		if (bottom <= 0) return Math.ceil(rect.height);
-		return Math.ceil(bottom + paddingBottom + borderBottom);
+	_getLayoutCache(item) {
+		const cache = this.plugin._cardLayoutCache, key = this._layoutCacheKey(item);
+		const value = cache.get(key);
+		if (!value) return null;
+		if ((value.expiresAt && Date.now() >= value.expiresAt) || !this._isImageLocksValid(value.imageLocks, item.entry.file.path)) { cache.delete(key); return null; }
+		lruSet(cache, key, value, 10000); return value;
 	}
+
+	_entrySignature(entry) {
+		const cache = this.app.metadataCache.getFileCache(entry.file) ?? {}, fm = cache.frontmatter ?? {};
+		const props = [...new Set([...(this.data?.properties ?? []), this._cardTitlePropertyId, this._imagePropertyId].filter(Boolean))];
+		return JSON.stringify([entry.file.path, entry.file.stat, fm, cache.tags,
+			props.map(id => [id, valueToString(entry.getValue(id))]),
+			(cache.embeds ?? []).map(embed => this._imageSpec(embed.link, entry.file.path).imageCacheKey),
+			this._imagePropertyId ? this._imageSpec(valueToString(entry.getValue(this._imagePropertyId)), entry.file.path).imageCacheKey : ""]);
+	}
+
+	_imageSpec(raw, path) {
+		const src = resolveImageSrc(raw, path, this.app);
+		const file = resolveImageFile(raw, path, this.app);
+		return { raw, label: raw, src, imageCacheKey: file instanceof obsidian.TFile ? `file:${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${file.stat?.size ?? 0}` : src ? `url:${raw}` : `missing:${raw}` };
+	}
+
+	_isImageLocksValid(locks = [], path) { return locks.every(lock => this._imageSpec(lock.raw, path).imageCacheKey === lock.imageCacheKey); }
+
+	_probeImageDimensions(spec) { return this.plugin._probeImageDimensions(spec); }
 
 	_getVirtualPreviewLines() {
 		return Math.max(1, Math.floor(this._cardMaxHeight / 19.5));
@@ -713,43 +775,6 @@ class KeepGridView extends obsidian.BasesView {
 			}
 			cardEl._kgVirtualTransform = transform;
 			cardEl.style.transform = transform;
-		}
-	}
-
-	_onVirtualPreviewReady(cardEl) {
-		const item = cardEl?._kgVirtualItem;
-		if (!item || !this._virtual || !cardEl.isConnected) return;
-		this._updateBodyFade(cardEl);
-	}
-
-	_getVirtualHeightKey(entry) {
-		return [
-			entry.file?.path,
-			entry.file?.stat?.mtime ?? 0,
-			this.currentCardWidth,
-			this._cardMaxHeight,
-			this._basePreviewHeight,
-			this._showTags,
-			this._previewImages,
-			this._imagePropertyId ?? "",
-			this._cardTitlePropertyId ?? "",
-			(this.data?.properties ?? []).join(","),
-			this._getVirtualPreviewLines(),
-			"image-natural-height-v1",
-		].join("\u001f");
-	}
-
-	_getCachedVirtualHeight(entry) {
-		return this.plugin?._cardHeightCache?.get(this._getVirtualHeightKey(entry));
-	}
-
-	_setCachedVirtualHeight(entry, height) {
-		const cache = this.plugin?._cardHeightCache;
-		if (!cache) return;
-		cache.set(this._getVirtualHeightKey(entry), height);
-		if (cache.size > 1000) {
-			const firstKey = cache.keys().next().value;
-			if (firstKey) cache.delete(firstKey);
 		}
 	}
 
@@ -799,177 +824,6 @@ class KeepGridView extends obsidian.BasesView {
 		return { pinned, normal };
 	}
 
-	_renderSection(label, entries, token) {
-		const sectionEl = this._contentEl.createDiv({ cls: "kg-section" });
-		if (label) sectionEl.createDiv({ cls: "kg-section-label", text: label });
-		const gridEl = sectionEl.createDiv({ cls: "kg-grid" });
-		const section = { entries, gridEl, rendered: 0, token };
-		this._sections.push(section);
-
-		return this._appendCardsToSection(section, label ? 18 : 48);
-	}
-
-	async _appendCardsToSection(section, count) {
-		if (!section || this._renderToken !== section.token) return 0;
-		const t0 = performance.now();
-		const end = Math.min(section.entries.length, section.rendered + count);
-
-		for (let i = section.rendered; i < end; i++) {
-			const entry = section.entries[i];
-			if (this._renderToken !== section.token) return 0;
-			const cardEl = this._createCard(entry, entry._cachedFm, entry._cachedCache);
-			const mode = i < this._eagerPreviewCardsPerSection ? "layout" : "shell";
-			const isReady = await this._prepareCardForDisplay(cardEl, section.gridEl, section.token, { mode });
-			if (!isReady) return 0;
-			section.gridEl.appendChild(cardEl);
-			this._trackedCards.push(cardEl);
-			this._previewObserver.observe(cardEl);
-		}
-
-		const appended = end - section.rendered;
-		section.rendered = end;
-		if (appended > 0) requestAnimationFrame(() => this._rememberCardRects());
-		const elapsed = performance.now() - t0;
-		if (elapsed > 16) this._perfLog("appendCards", { appended, elapsed: Math.round(elapsed), requested: count });
-		return appended;
-	}
-
-	_appendCardsNearViewport() {
-		if (this._isAppendingCards || this._appendScheduled) return;
-		const remaining = this._sections.some(section => section.rendered < section.entries.length);
-		if (!remaining) return;
-
-		const distanceToBottom = this._scrollEl.scrollHeight - this._scrollEl.scrollTop - this._scrollEl.clientHeight;
-		if (distanceToBottom > this._scrollEl.clientHeight * 6) return;
-
-		this._appendScheduled = true;
-		this._scheduleIdle(() => this._appendNextCardChunk());
-	}
-
-	async _appendNextCardChunk() {
-		this._appendScheduled = false;
-		this._isAppendingCards = true;
-		try {
-			let appended = 0;
-			for (const section of this._sections) {
-				if (section.rendered >= section.entries.length) continue;
-				appended += await this._appendCardsToSection(section, 12);
-				if (appended >= 24) break;
-			}
-			} finally {
-				this._isAppendingCards = false;
-			}
-
-		const distanceToBottom = this._scrollEl.scrollHeight - this._scrollEl.scrollTop - this._scrollEl.clientHeight;
-		if (distanceToBottom < this._scrollEl.clientHeight * 5) {
-			this._appendCardsNearViewport();
-		}
-	}
-
-	async _restoreScrollPosition(token, targetScrollTop) {
-		try {
-			const targetBottom = targetScrollTop + this._scrollEl.clientHeight;
-			let guard = 0;
-
-			while (
-				this._renderToken === token &&
-				this._scrollEl.scrollHeight < targetBottom &&
-				this._sections.some(section => section.rendered < section.entries.length) &&
-				guard < 200
-			) {
-				let appended = 0;
-				for (const section of this._sections) {
-					if (section.rendered >= section.entries.length) continue;
-					appended += await this._appendCardsToSection(section, 18);
-					if (appended >= 36) break;
-				}
-				if (appended === 0) break;
-				guard++;
-			}
-
-			if (this._renderToken !== token) return;
-			const maxScrollTop = Math.max(0, this._scrollEl.scrollHeight - this._scrollEl.clientHeight);
-			this._scrollEl.scrollTop = Math.min(targetScrollTop, maxScrollTop);
-			this._queueVisiblePreviews();
-			this._appendCardsNearViewport();
-		} finally {
-			if (this._renderToken === token) this._scrollEl.removeClass("kg-restoring-scroll");
-		}
-	}
-
-	_scheduleIdle(callback) {
-		if (typeof window.requestIdleCallback === "function") {
-			window.requestIdleCallback(callback, { timeout: 30 });
-		} else {
-			setTimeout(callback, 16);
-		}
-	}
-
-	async _prepareCardForDisplay(cardEl, gridEl, token, options = {}) {
-		cardEl.style.setProperty("--kg-preview-lines", String(Math.max(1, Math.floor(this._cardMaxHeight / 19.5))));
-		const mode = options.mode ?? "layout";
-		const hasPreview = await this._loadCardBody(cardEl, token, { mode });
-		if (this._renderToken !== token) return false;
-		cardEl._kgPreviewLoaded = mode !== "shell";
-		if (!hasPreview) {
-			cardEl.addClass("kg-no-preview");
-			cardEl.style.setProperty("--kg-preview-lines", "0");
-			cardEl._keepBodyEl?.remove();
-			cardEl._keepBodyEl = null;
-		}
-
-		const width = this._getGridColumnWidth(gridEl);
-		this._measureEl.style.width = `${width}px`;
-		cardEl.style.width = `${width}px`;
-		this._measureEl.appendChild(cardEl);
-		this._updateBodyFade(cardEl);
-
-		const height = cardEl.getBoundingClientRect().height;
-		const span = Math.max(1, Math.ceil((height + this._masonryGap) / (this._masonryRowHeight + this._masonryGap)));
-		cardEl._kgGridSpan = span;
-		cardEl.style.gridRowEnd = `span ${span}`;
-		cardEl.style.width = "";
-		return true;
-	}
-
-	_updateCardSpan(cardEl) {
-		const firstRects = this._captureCardRects();
-		const changed = this._recalculateCardSpan(cardEl);
-		if (changed) {
-			this._animateCardMoves(firstRects);
-			requestAnimationFrame(() => this._rememberCardRects());
-		}
-	}
-
-	_recalculateCardSpan(cardEl) {
-		const gridEl = cardEl?.closest?.(".kg-grid");
-		if (!gridEl || !this._measureEl) return false;
-
-		const width = this._getGridColumnWidth(gridEl);
-		this._lastMeasuredCardWidth = width;
-		this._measureEl.style.width = `${width}px`;
-		const clone = cardEl.cloneNode(true);
-		clone.style.width = `${width}px`;
-		clone.style.height = "auto";
-		clone.style.gridRowEnd = "";
-		this._measureEl.appendChild(clone);
-		const height = clone.getBoundingClientRect().height;
-		clone.remove();
-
-		const span = Math.max(1, Math.ceil((height + this._masonryGap) / (this._masonryRowHeight + this._masonryGap)));
-		if (span !== cardEl._kgGridSpan) {
-			cardEl._kgGridSpan = span;
-			cardEl.style.gridRowEnd = `span ${span}`;
-			return true;
-		}
-		return false;
-	}
-
-	_getGridColumnWidth(gridEl) {
-		const gridWidth = gridEl.clientWidth || this._contentEl.clientWidth || this._scrollEl.clientWidth || this.currentCardWidth;
-		return Math.max(1, Math.min(this.currentCardWidth, gridWidth));
-	}
-
 	_scheduleResizeAnimation() {
 		if (this._resizeTicking) return;
 		this._resizeTicking = true;
@@ -989,13 +843,31 @@ class KeepGridView extends obsidian.BasesView {
 				// Step 1: Capture each card's current logical position (= last layout target)
 				// Using _kgVirtualTransform avoids reading mid-animation style.transform values.
 				const oldTransforms = new Map();
+				const resizeOrigins = new Map();
+				// Measurement can span several resize frames. Preserve pending origins
+				// even when their old DOM has already been removed. Include measured
+				// overscan cards that may enter the viewport after the reflow.
+				for (const section of this._virtual.sections) {
+					for (const item of section.items) {
+						if (item._kgResizeOrigin) resizeOrigins.set(item, item._kgResizeOrigin);
+						else if (item.measured) resizeOrigins.set(item, { x: item.x, top: section.top + item.y, height: item.height });
+					}
+				}
 				for (const [, cardEl] of this._virtual.mounted) {
 					if (!cardEl.isConnected) continue;
+					const item = cardEl._kgVirtualItem;
+					cardEl._kgOldTop = item.y + this._virtual.sections.find(section => section.items[item.index] === item).top;
+					resizeOrigins.set(item, { x: item.x, top: cardEl._kgOldTop, height: item.height });
 					oldTransforms.set(cardEl, cardEl._kgVirtualTransform ?? cardEl.style.transform);
 				}
 
 				// Step 2: Apply new layout (updates _kgVirtualTransform + style.transform for all cards)
 				this._layoutVirtualSections();
+				// Width-dependent measurement may replace the DOM. Carry the old
+				// position to the replacement once its new height is confirmed.
+				for (const [item, origin] of resizeOrigins) {
+					if (!item.mountedEl?.isConnected) item._kgResizeOrigin = { ...origin, epoch: this._layoutEpoch };
+				}
 				this._renderVirtualWindow();
 
 				// Step 3: For each card whose position changed, start a Web Animation.
@@ -1004,6 +876,11 @@ class KeepGridView extends obsidian.BasesView {
 					if (!cardEl.isConnected) continue;
 					const newTransform = cardEl._kgVirtualTransform ?? cardEl.style.transform;
 					if (oldTransform === newTransform) continue;
+					const item = cardEl._kgVirtualItem;
+					const section = this._virtual.sections.find(section => section.items[item.index] === item);
+					const top = this._scrollEl.scrollTop, bottom = top + this._scrollEl.clientHeight;
+					const overlaps = y => y + item.height >= top && y <= bottom;
+					if (!overlaps(cardEl._kgOldTop) && !overlaps(section.top + item.y)) continue;
 
 					// Cancel previous animation (if column count changed twice rapidly)
 					cardEl._kgReflowAnimation?.cancel();
@@ -1024,262 +901,9 @@ class KeepGridView extends obsidian.BasesView {
 			}
 
 			const elapsed = performance.now() - t0;
-			if (elapsed > 16) this._perfLog("resizeLayout", { elapsed: Math.round(elapsed), virtual: true });
+			this._perfLog("resizeLayout", { elapsed, virtual: true });
 			return;
 		}
-		if (!this._trackedCards.length) return;
-		this._scrollEl.style.setProperty("--kg-card-width", `${this.currentCardWidth}px`);
-
-		const gridEl = this._contentEl.querySelector(".kg-grid");
-		const nextCardWidth = gridEl ? this._getGridColumnWidth(gridEl) : this.currentCardWidth;
-		const widthChanged = Math.abs(nextCardWidth - this._lastMeasuredCardWidth) > 1;
-		const visibleCards = this._getVisibleTrackedCards();
-		if (!widthChanged && visibleCards.length === 0) {
-			this._lastCardRects = new Map();
-			return;
-		}
-
-		const firstRects = this._getRememberedRectsForCards(visibleCards);
-
-		if (widthChanged) {
-			for (const cardEl of visibleCards) {
-				this._recalculateCardSpan(cardEl);
-			}
-			this._lastMeasuredCardWidth = nextCardWidth;
-		}
-
-		if (firstRects?.size) this._animateCardMoves(firstRects);
-		if (visibleCards.length > 0) requestAnimationFrame(() => this._rememberCardRects());
-		const elapsed = performance.now() - t0;
-		if (elapsed > 16) this._perfLog("resizeLayout", { elapsed: Math.round(elapsed), widthChanged });
-	}
-
-	_getVisibleTrackedCards() {
-		const cards = [];
-		const source = this._visibleCards?.size ? this._visibleCards : [];
-		for (const cardEl of source) {
-			if (!cardEl.isConnected) continue;
-			cards.push(cardEl);
-		}
-		return cards;
-	}
-
-	_captureCardRects(cards = this._getVisibleTrackedCards()) {
-		if (this.plugin?.settings?.enableAnimation === false) return null;
-		const rects = new Map();
-		for (const cardEl of cards) {
-			if (!cardEl.isConnected) continue;
-			rects.set(cardEl, cardEl.getBoundingClientRect());
-		}
-		return rects;
-	}
-
-	_getRememberedRectsForCards(cards) {
-		if (this.plugin?.settings?.enableAnimation === false || !cards?.length) return null;
-		const remembered = this._lastCardRects;
-		if (!remembered?.size) return null;
-
-		const rects = new Map();
-		for (const cardEl of cards) {
-			const rect = remembered.get(cardEl);
-			if (rect) rects.set(cardEl, rect);
-		}
-		return rects.size ? rects : null;
-	}
-
-	_rememberCardRects() {
-		if (this.plugin?.settings?.enableAnimation === false) {
-			this._lastCardRects = new Map();
-			return;
-		}
-		this._lastCardRects = this._captureCardRects(this._getVisibleTrackedCards()) ?? new Map();
-	}
-
-	_animateCardMoves(firstRects) {
-		if (!firstRects || this.plugin?.settings?.enableAnimation === false) return;
-
-		const moves = [];
-		for (const cardEl of firstRects.keys()) {
-			const first = firstRects.get(cardEl);
-			if (!first || !cardEl.isConnected) continue;
-			const last = cardEl.getBoundingClientRect();
-			const dx = first.left - last.left;
-			const dy = first.top - last.top;
-			if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
-			moves.push({ cardEl, dx, dy });
-		}
-		if (moves.length === 0) return;
-
-		for (const { cardEl, dx, dy } of moves) {
-			cardEl.style.transition = "none";
-			cardEl.style.transform = `translate(${dx}px, ${dy}px)`;
-		}
-		for (const { cardEl } of moves) {
-			cardEl.getBoundingClientRect();
-		}
-
-		requestAnimationFrame(() => {
-			for (const { cardEl } of moves) {
-				if (!cardEl.isConnected) continue;
-				cardEl.style.transition = "";
-				cardEl.style.transform = "";
-			}
-		});
-	}
-
-	_queueVisiblePreviews() {
-		const rootRect = this._scrollEl.getBoundingClientRect();
-		const cards = this._visibleCards?.size ? [...this._visibleCards] : [];
-		cards.sort((a, b) => {
-			const scoreA = this._getPreviewQueueScore(a, rootRect);
-			const scoreB = this._getPreviewQueueScore(b, rootRect);
-			return scoreA.group - scoreB.group || scoreA.distance - scoreB.distance || scoreA.top - scoreB.top || scoreA.left - scoreB.left;
-		});
-
-		for (let i = 0, len = cards.length; i < len; i++) {
-			const cardEl = cards[i];
-			if (!cardEl.isConnected) continue;
-			if ((cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
-			const rect = cardEl.getBoundingClientRect();
-			const isVisible = rect.bottom >= rootRect.top && rect.top <= rootRect.bottom;
-			this._queuePreview(cardEl, isVisible);
-		}
-	}
-
-	_queuePreview(cardEl, priority = false) {
-		if (!cardEl || (cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading || this._queuedPreviewCards.has(cardEl)) return;
-		this._queuedPreviewCards.add(cardEl);
-		this._previewQueue.push(cardEl);
-		if (priority) this._processPreviewQueue();
-		else this._schedulePreviewProcessing();
-	}
-
-	_schedulePreviewProcessing() {
-		if (this._previewProcessScheduled) return;
-		this._previewProcessScheduled = true;
-		this._scheduleIdle(() => {
-			this._previewProcessScheduled = false;
-			this._processPreviewQueue();
-		});
-	}
-
-	_processPreviewQueue() {
-		this._refreshPreviewQueue();
-		while (this._activePreviewLoads < this._maxPreviewLoads && this._previewQueue.length > 0) {
-			const cardEl = this._previewQueue.shift();
-			this._queuedPreviewCards.delete(cardEl);
-			if (!cardEl?.isConnected || (cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
-
-			const token = this._renderToken;
-			cardEl._kgPreviewLoading = true;
-			this._activePreviewLoads++;
-			void this._loadCardBody(cardEl, token, { mode: "upgrade" })
-				.then(hasPreview => {
-					if (token === this._renderToken && !hasPreview) {
-						cardEl.addClass("kg-no-preview");
-						cardEl._kgNeedsMarkdownUpgrade = false;
-						cardEl._keepBodyEl?.remove();
-						cardEl._keepBodyEl = null;
-						if (this._virtual) this._onVirtualPreviewReady(cardEl);
-					} else if (token === this._renderToken) {
-						cardEl._kgNeedsMarkdownUpgrade = false;
-						this._updateBodyFade(cardEl);
-						if (this._virtual) this._onVirtualPreviewReady(cardEl);
-						else this._updateCardSpan(cardEl);
-					}
-				})
-				.finally(() => {
-					cardEl._kgPreviewLoading = false;
-					this._activePreviewLoads = Math.max(0, this._activePreviewLoads - 1);
-					if (token === this._renderToken) {
-						cardEl._kgPreviewLoaded = true;
-					}
-					this._processPreviewQueue();
-				});
-		}
-	}
-
-	_refreshPreviewQueue() {
-		if (this._previewQueue.length <= 1) return;
-		const rootRect = this._scrollEl.getBoundingClientRect();
-		const seen = new Set();
-		const cards = [];
-		for (const cardEl of this._previewQueue) {
-			if (!cardEl?.isConnected || seen.has(cardEl)) continue;
-			if ((cardEl._kgPreviewLoaded && !cardEl._kgNeedsMarkdownUpgrade) || cardEl._kgPreviewLoading) continue;
-			const score = this._getPreviewQueueScore(cardEl, rootRect);
-			if (score.group >= 3) continue;
-			seen.add(cardEl);
-			cards.push({ cardEl, score });
-		}
-
-		cards.sort((a, b) => {
-			const scoreA = a.score;
-			const scoreB = b.score;
-			return scoreA.group - scoreB.group || scoreA.distance - scoreB.distance || scoreA.top - scoreB.top || scoreA.left - scoreB.left;
-		});
-
-		this._previewQueue = cards.slice(0, this._previewQueueLimit).map(item => item.cardEl);
-		this._queuedPreviewCards = new Set(this._previewQueue);
-	}
-
-	_getPreviewQueueScore(cardEl, rootRect = this._scrollEl.getBoundingClientRect()) {
-		if (this._virtual && cardEl?._kgVirtualItem) {
-			const item = cardEl._kgVirtualItem;
-			const sectionTop = cardEl.parentElement?.offsetTop ?? 0;
-			const topAbs = sectionTop + item.y;
-			const bottomAbs = topAbs + item.height;
-			const rootTopAbs = this._scrollEl.scrollTop;
-			const rootBottomAbs = rootTopAbs + this._scrollEl.clientHeight;
-			const margin = this._virtualOverscan;
-			const isVisible = bottomAbs >= rootTopAbs && topAbs <= rootBottomAbs;
-			if (isVisible) {
-				return {
-					group: 0,
-					distance: 0,
-					top: topAbs,
-					left: item.x,
-				};
-			}
-
-			const isBelow = topAbs > rootBottomAbs;
-			const distance = isBelow ? topAbs - rootBottomAbs : rootTopAbs - bottomAbs;
-			if (distance > margin) return { group: 3, distance, top: topAbs, left: item.x };
-			const directionGroup = this._scrollDirection >= 0
-				? (isBelow ? 1 : 2)
-				: (isBelow ? 2 : 1);
-			return { group: directionGroup, distance, top: topAbs, left: item.x };
-		}
-
-		const rect = cardEl.getBoundingClientRect();
-		const rootTop = rootRect.top;
-		const rootBottom = rootRect.bottom;
-		const margin = 2200;
-		const isVisible = rect.bottom >= rootTop && rect.top <= rootBottom;
-		if (isVisible) {
-			return {
-				group: 0,
-				distance: 0,
-				top: Math.max(rect.top, rootTop),
-				left: rect.left,
-			};
-		}
-
-		const isBelow = rect.top > rootBottom;
-		const distance = isBelow ? rect.top - rootBottom : rootTop - rect.bottom;
-		if (distance > margin) {
-			return { group: 3, distance, top: rect.top, left: rect.left };
-		}
-
-		const directionGroup = this._scrollDirection >= 0
-			? (isBelow ? 1 : 2)
-			: (isBelow ? 2 : 1);
-		return {
-			group: directionGroup,
-			distance,
-			top: rect.top,
-			left: rect.left,
-		};
 	}
 
 	_getRenderSignature(entries) {
@@ -1299,18 +923,8 @@ class KeepGridView extends obsidian.BasesView {
 			...(this.data?.properties ?? []),
 		];
 
-		const entrySig = entries.map(entry => {
-			const cache = this.app?.metadataCache.getFileCache(entry.file) ?? {};
-			const fm = cache.frontmatter ?? {};
-			return [
-				entry.file?.path,
-				entry.file?.stat?.mtime,
-				fm.keep_pinned,
-				fm.keep_color,
-				this._imagePropertyId ? valueToString(entry.getValue(this._imagePropertyId)) : "",
-				this._cardTitlePropertyId ? valueToString(entry.getValue(this._cardTitlePropertyId)) : "",
-			].join("\u001f");
-		});
+		config.push(this.plugin._cssGeneration);
+		const entrySig = entries.map(entry => this._entrySignature(entry));
 
 		return JSON.stringify({ config, entries: entrySig });
 	}
@@ -1381,6 +995,16 @@ class KeepGridView extends obsidian.BasesView {
 
 		this._attachCardActions(cardEl, entry, fm, isPinned);
 		return cardEl;
+	}
+
+	_setActionIcon(button, name) {
+		this.plugin._iconTemplates ??= new Map();
+		let template = this.plugin._iconTemplates.get(name);
+		if (!template) {
+			template = document.createElement("span"); obsidian.setIcon(template, name);
+			this.plugin._iconTemplates.set(name, template);
+		}
+		for (const child of template.childNodes) button.appendChild(child.cloneNode(true));
 	}
 
 	_attachCardActions(cardEl, entry, fm, isPinned) {
@@ -1473,31 +1097,32 @@ class KeepGridView extends obsidian.BasesView {
 			}).open();
 		};
 
-		if (!obsidian.Platform.isMobile) {
+		cardEl._kgActions = { pin: handlePin, color: handleColorChange, delete: handleDelete };
+		cardEl._kgEnsureButtons = (full = true) => {
+			if (obsidian.Platform.isMobile || cardEl._kgButtonsReady) return;
+			if (!cardEl._kgPinReady) {
+			cardEl._kgPinReady = true;
 			const pinBtn = cardEl.createEl("button", {
 				cls: `kg-pin-btn clickable-icon${isPinned ? " is-pinned" : ""}`,
 				attr: { "aria-label": isPinned ? "Unpin" : "Pin" },
 			});
-			obsidian.setIcon(pinBtn, isPinned ? "pin-off" : "pin");
-			pinBtn.addEventListener("click", event => {
-				event.stopPropagation();
-				void handlePin();
-			});
+			this._setActionIcon(pinBtn, isPinned ? "pin-off" : "pin");
+			pinBtn.dataset.kgAction = "pin";
+			}
+			if (!full) return;
+			cardEl._kgButtonsReady = true;
 
 			const actionsEl = cardEl.createDiv({ cls: "kg-card-actions" });
 			const colorBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "Change color" } });
-			obsidian.setIcon(colorBtn, "palette");
-			colorBtn.addEventListener("click", handleColorChange);
+			this._setActionIcon(colorBtn, "palette");
+			colorBtn.dataset.kgAction = "color";
 
 			const deleteBtn = actionsEl.createEl("button", { cls: "kg-action-btn clickable-icon", attr: { "aria-label": "Delete" } });
-			obsidian.setIcon(deleteBtn, "trash");
-			deleteBtn.addEventListener("click", event => {
-				event.stopPropagation();
-				void handleDelete();
-			});
-		}
-
-		cardEl.addEventListener("contextmenu", event => {
+			this._setActionIcon(deleteBtn, "trash");
+			deleteBtn.dataset.kgAction = "delete";
+		};
+		cardEl._kgHandlers = {};
+		cardEl._kgHandlers.contextmenu = event => {
 			event.preventDefault();
 			const menu = new obsidian.Menu();
 			menu.addItem(item => {
@@ -1526,9 +1151,9 @@ class KeepGridView extends obsidian.BasesView {
 					.onClick(handleDelete);
 			});
 			menu.showAtMouseEvent(event);
-		});
+		};
 
-		cardEl.addEventListener("click", event => {
+		cardEl._kgHandlers.click = event => {
 			if (event.target instanceof Element && (event.target.closest("a") || event.target.closest(".kg-action-btn") || event.target.closest(".kg-pin-btn"))) return;
 			if (!this.app?.workspace) return;
 
@@ -1540,9 +1165,9 @@ class KeepGridView extends obsidian.BasesView {
 				const leaf = this.app.workspace.getLeaf(newLeaf);
 				void leaf.openFile(file);
 			}
-		});
+		};
 
-		cardEl.addEventListener("mouseover", event => {
+		cardEl._kgHandlers.mouseover = event => {
 			if (event.relatedTarget instanceof Element && cardEl.contains(event.relatedTarget)) return;
 			if (event.target instanceof Element && event.target.closest("a")) return;
 			this.app?.workspace.trigger("hover-link", {
@@ -1553,7 +1178,7 @@ class KeepGridView extends obsidian.BasesView {
 				linktext: file.path,
 				sourcePath: "",
 			});
-		});
+		};
 	}
 
 	async _loadCardBody(cardEl, token, options = {}) {
@@ -1632,109 +1257,57 @@ class KeepGridView extends obsidian.BasesView {
 		}
 	}
 
+	_parsePreviewBlocks(markdown, entry) {
+		const lines = markdown.split("\n").map(line => line.trimEnd()).filter(line => line.trim());
+		const blocks = [];
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			const code = this._readCodeBlock(lines, i);
+			if (code) { blocks.push({ type: "code", value: code, count: Math.max(1, code.lines.length) }); i = code.endIndex; continue; }
+			const table = this._readMarkdownTable(lines, i);
+			if (table) { blocks.push({ type: "table", value: table, count: table.rows.length + 1 }); i = table.endIndex; continue; }
+			const callout = this._readCallout(lines, i);
+			if (callout) { blocks.push({ type: "callout", value: callout, count: callout.lines.length + 1 }); i = callout.endIndex; continue; }
+			const image = this._readPreviewImage(line, { _keepEntry: entry });
+			if (image) { blocks.push({ type: "image", value: image, text: line.trim(), count: 1 }); continue; }
+			const task = line.match(/^(\s*)[-*]\s+\[([ xX])]\s*(.*)$/);
+			const heading = line.match(/^#{1,6}\s+(.*)$/);
+			const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
+			const text = this._cleanPreviewText(task ? task[3] : heading ? heading[1] : bullet ? bullet[2] : line);
+			if (!text && !task) continue;
+			blocks.push({ type: task ? "task" : heading ? "heading" : bullet ? "bullet" : "line", text,
+				indent: task?.[1] ?? bullet?.[1], checked: task?.[2]?.toLowerCase() === "x", count: 1 });
+		}
+		return blocks;
+	}
+
 	_renderLightweightPreview(bodyEl, markdown, cardEl) {
 		bodyEl.empty();
 		const maxLines = Math.max(1, Number(cardEl?.style.getPropertyValue("--kg-preview-lines") || 8));
-		const lines = markdown
-			.split("\n")
-			.map(line => line.trimEnd())
-			.filter(line => line.trim().length > 0);
-
-		let renderedLines = 0;
-		let renderableLines = 0;
-		for (let index = 0; index < lines.length; index++) {
-			const line = lines[index];
-			const codeBlock = this._readCodeBlock(lines, index);
-			if (codeBlock) {
-				renderableLines += Math.max(1, codeBlock.lines.length);
-				if (renderedLines < maxLines) {
-					this._renderPreviewCodeBlock(bodyEl, codeBlock, maxLines - renderedLines);
-					renderedLines += Math.min(Math.max(1, codeBlock.lines.length), maxLines - renderedLines);
-				}
-				index = codeBlock.endIndex;
-				continue;
-			}
-
-			const table = this._readMarkdownTable(lines, index);
-			if (table) {
-				const rowCount = 1 + table.rows.length;
-				renderableLines += rowCount;
-				if (renderedLines < maxLines) {
-					const renderedRows = this._renderPreviewTable(bodyEl, table, maxLines - renderedLines);
-					renderedLines += renderedRows;
-				}
-				index = table.endIndex;
-				continue;
-			}
-
-			const callout = this._readCallout(lines, index);
-			if (callout) {
-				const lineCount = 1 + callout.lines.length;
-				renderableLines += lineCount;
-				if (renderedLines < maxLines) {
-					this._renderPreviewCallout(bodyEl, callout, maxLines - renderedLines);
-					renderedLines += Math.min(lineCount, maxLines - renderedLines);
-				}
-				index = callout.endIndex;
-				continue;
-			}
-
-			const image = this._readPreviewImage(line, cardEl);
-			if (image) {
-				renderableLines++;
-				if (renderedLines < maxLines) {
-					if (this._previewImages) this._renderPreviewImage(bodyEl, image);
-					else bodyEl.createDiv({ cls: "kg-lite-line", text: line.trim() });
-					renderedLines++;
-				}
-				continue;
-			}
-
-			const cleanLine = this._cleanPreviewText(line);
-			if (!cleanLine) continue;
-			renderableLines++;
+		const item = cardEl?._kgVirtualItem;
+		const blocks = item?.parsedBlocks ?? this._parsePreviewBlocks(markdown, cardEl?._keepEntry);
+		let renderedLines = 0, renderableLines = 0;
+		for (const block of blocks) {
+			renderableLines += block.count;
 			if (renderedLines >= maxLines) continue;
-			const task = line.match(/^(\s*)[-*]\s+\[([ xX])]\s*(.*)$/);
-			if (task) {
-				const text = this._cleanPreviewText(task[3]);
-				const row = bodyEl.createDiv({ cls: "kg-lite-task" });
-				this._applyPreviewIndent(row, task[1]);
-				const checkbox = row.createEl("input", { type: "checkbox" });
-				checkbox.checked = task[2].toLowerCase() === "x";
-				checkbox.disabled = true;
-				if (text) row.createSpan({ text });
-				renderedLines++;
-				continue;
-			}
-
-			const heading = line.match(/^#{1,6}\s+(.*)$/);
-			if (heading) {
-				const text = this._cleanPreviewText(heading[1]);
-				if (!text) continue;
-				bodyEl.createDiv({ cls: "kg-lite-heading", text });
-				renderedLines++;
-				continue;
-			}
-
-			const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
-			if (bullet) {
-				const text = this._cleanPreviewText(bullet[2]);
-				if (!text) continue;
-				const row = bodyEl.createDiv({ cls: "kg-lite-bullet" });
-				this._applyPreviewIndent(row, bullet[1]);
-				row.createSpan({ cls: "kg-lite-bullet-dot", text: "-" });
-				row.createSpan({ text });
-				renderedLines++;
-				continue;
-			}
-
-			bodyEl.createDiv({ cls: "kg-lite-line", text: cleanLine });
-			renderedLines++;
+			const remaining = maxLines - renderedLines;
+			if (block.type === "code") this._renderPreviewCodeBlock(bodyEl, block.value, remaining);
+			else if (block.type === "table") this._renderPreviewTable(bodyEl, block.value, remaining);
+			else if (block.type === "callout") this._renderPreviewCallout(bodyEl, block.value, remaining);
+			else if (block.type === "image") {
+				if (this._previewImages) this._renderPreviewImage(bodyEl, item?.imageLocks?.find(lock => lock.raw === block.value.raw) ?? block.value);
+				else bodyEl.createDiv({ cls: "kg-lite-line", text: block.text });
+			} else if (block.type === "task") {
+				const row = bodyEl.createDiv({ cls: "kg-lite-task" }); this._applyPreviewIndent(row, block.indent);
+				const checkbox = row.createEl("input", { type: "checkbox" }); checkbox.checked = block.checked; checkbox.disabled = true;
+				if (block.text) row.createSpan({ text: block.text });
+			} else if (block.type === "bullet") {
+				const row = bodyEl.createDiv({ cls: "kg-lite-bullet" }); this._applyPreviewIndent(row, block.indent);
+				row.createSpan({ cls: "kg-lite-bullet-dot", text: "-" }); row.createSpan({ text: block.text });
+			} else bodyEl.createDiv({ cls: `kg-lite-${block.type}`, text: block.text });
+			renderedLines += Math.min(block.count, remaining);
 		}
-		return {
-			renderedLines,
-			truncated: renderableLines > renderedLines,
-		};
+		return { renderedLines, truncated: renderableLines > renderedLines };
 	}
 
 	_applyPreviewIndent(row, indent) {
@@ -1864,13 +1437,13 @@ class KeepGridView extends obsidian.BasesView {
 		if (!raw) return null;
 
 		const filePath = cardEl?._keepEntry?.file?.path ?? "";
-		const src = resolveImageSrc(raw, filePath, this.app);
-		return src ? { src, label: raw } : { src: null, label: raw };
+		return this._imageSpec(raw, filePath);
 	}
 
 	_renderPreviewImage(bodyEl, image) {
 		const wrap = bodyEl.createDiv({ cls: "kg-lite-image-wrap" });
-		if (image.src) {
+		if (image.src && image.status !== "failed") {
+			if (image.naturalWidth) wrap.style.aspectRatio = `${image.naturalWidth} / ${image.naturalHeight}`;
 			wrap.createEl("img", { cls: "kg-lite-image", attr: { src: image.src, alt: "", loading: "lazy", decoding: "async" } });
 		} else {
 			wrap.createDiv({ cls: "kg-lite-image-missing", text: image.label });
@@ -1889,38 +1462,14 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	async _getPreviewSource(file, maxLines, maxChars) {
-		const cacheKey = `${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${maxLines}\u001f${maxChars}`;
+		const cacheKey = `${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${file.stat?.size ?? 0}\u001f${maxLines}\u001f${maxChars}`;
 		const cache = this.plugin?._previewSourceCache;
-		if (cache?.has(cacheKey)) return cache.get(cacheKey);
+		if (cache?.has(cacheKey)) { const value = cache.get(cacheKey); lruSet(cache, cacheKey, value, 3000); return value; }
 
 		const content = await this.app.vault.cachedRead(file);
 		const preview = extractBodyMarkdownInfo(content, maxLines, maxChars);
-		if (cache) {
-			cache.set(cacheKey, preview);
-			if (cache.size > 500) {
-				const firstKey = cache.keys().next().value;
-				if (firstKey) cache.delete(firstKey);
-			}
-		}
+		if (cache) lruSet(cache, cacheKey, preview, 3000);
 		return preview;
-	}
-
-	_hasRenderedPreviewContent(bodyEl) {
-		if (bodyEl.textContent.trim()) return true;
-		return Boolean(bodyEl.querySelector("img, table, pre, code, .callout, .internal-embed, .markdown-embed, iframe, video, audio, canvas, svg"));
-	}
-
-	async _waitForPreviewImages(bodyEl, timeoutMs) {
-		const images = [...bodyEl.querySelectorAll("img")].filter(img => !img.complete);
-		if (images.length === 0) return;
-
-		await Promise.race([
-			Promise.all(images.slice(0, 8).map(img => new Promise(resolve => {
-				img.addEventListener("load", resolve, { once: true });
-				img.addEventListener("error", resolve, { once: true });
-			}))),
-			new Promise(resolve => setTimeout(resolve, timeoutMs)),
-		]);
 	}
 
 	_updateBodyFade(cardEl) {
@@ -2214,7 +1763,22 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 		await this.loadSettings();
 		this._scrollPositions = new Map();
 		this._previewSourceCache = new Map();
-		this._cardHeightCache = new Map();
+		this._cardLayoutCache = new Map();
+		this._imageDimensionCache = new Map();
+		this._inFlightImageProbes = new Map();
+		this._imageProbeQueue = [];
+		this._activeImageProbes = 0;
+		this._maxConcurrentImageProbes = 8;
+		this._cssGeneration = 0;
+		this._views = new Set();
+		const refresh = () => { for (const view of this._views) { view._renderSignature = null; view._debouncedRender(); } };
+		this.registerEvent(this.app.workspace.on("css-change", () => { this._cssGeneration++; refresh(); }));
+		this.app.workspace.onLayoutReady(() => {
+			for (const event of ["create", "modify", "delete", "rename"]) this.registerEvent(this.app.vault.on(event, (file, oldPath) => {
+				if (!/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(file.path) && !/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(oldPath ?? "")) return;
+				this._imageDimensionCache.clear(); refresh();
+			}));
+		});
 		this.addSettingTab(new KeepBasesViewSettingTab(this.app, this));
 
 		this.registerHoverLinkSource(HOVER_SOURCE, {
@@ -2259,6 +1823,38 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 				}
 			},
 		});
+	}
+
+	_probeImageDimensions(spec) {
+		const key = spec.imageCacheKey, cache = this._imageDimensionCache;
+		const cached = cache.get(key);
+		if (cached && (!cached.expiresAt || cached.expiresAt > Date.now())) { lruSet(cache, key, cached, 2000); return Promise.resolve(cached); }
+		cache.delete(key);
+		if (this._inFlightImageProbes.has(key)) return this._inFlightImageProbes.get(key);
+		const promise = new Promise(resolve => {
+			this._imageProbeQueue.push(() => {
+				const img = new Image(); img.decoding = "async"; let finished = false;
+				const finish = ok => {
+					if (finished) return; finished = true; clearTimeout(timer);
+					img.onload = img.onerror = null;
+					const result = ok && img.naturalWidth > 0 && img.naturalHeight > 0 ? { status: "ok", naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight } : { status: "failed", expiresAt: Date.now() + 60000 };
+					if (result.status === "failed") img.src = "";
+					result.imageCacheKey = key;
+					lruSet(cache, key, result, 2000); this._inFlightImageProbes.delete(key);
+					this._activeImageProbes--; resolve(result); this._drainImageProbes();
+				};
+				const timer = setTimeout(() => finish(false), 3000);
+				img.onload = () => finish(true); img.onerror = () => finish(false);
+				if (spec.src) { img.src = spec.src; if (img.complete) finish(img.naturalWidth > 0); } else finish(false);
+			});
+		});
+		this._inFlightImageProbes.set(key, promise); this._drainImageProbes(); return promise;
+	}
+
+	_drainImageProbes() {
+		while (this._activeImageProbes < this._maxConcurrentImageProbes && this._imageProbeQueue.length) {
+			this._activeImageProbes++; this._imageProbeQueue.shift()();
+		}
 	}
 
 	async loadSettings() {
