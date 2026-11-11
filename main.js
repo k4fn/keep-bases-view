@@ -199,7 +199,21 @@ class KeepGridView extends obsidian.BasesView {
 		this._debouncedRender();
 	}
 
+	// Skips clearing the saved scroll position (as opposed to onClose()) to
+	// preserve last position on the base view when using 'back'
+	// after opening a note with this.plugin.settings.openInPopup=false.
+	onunload() {
+		this._teardown();
+	}
+
 	onClose() {
+		this._teardown();
+		this._clearSavedScrollPosition();
+	}
+
+	_teardown() {
+		if (this._tornDown) return;
+		this._tornDown = true;
 		this._renderToken++;
 		this._layoutEpoch++;
 		this._virtual = null;
@@ -210,7 +224,6 @@ class KeepGridView extends obsidian.BasesView {
 		for (const [type, handler] of Object.entries(this._delegatedHandlers)) this._contentEl.removeEventListener(type, handler);
 		this._scrollEl.removeEventListener("pointermove", this._rememberPointer);
 		this._scrollEl.removeEventListener("wheel", this._rememberPointer);
-		this._clearSavedScrollPosition();
 		this._debouncedRender.cancel();
 		this._resizeObserver.disconnect();
 		this._scrollEl.removeEventListener("scroll", this._onScroll);
@@ -639,6 +652,7 @@ class KeepGridView extends obsidian.BasesView {
 
 	async _processMeasureQueue() {
 		if (this._batchRun) return;
+		this._measurePaused = false;
 		const token = this._renderToken, epoch = this._layoutEpoch, v = this._virtual;
 		const run = {}; this._batchRun = run;
 		const valid = () => token === this._renderToken && epoch === this._layoutEpoch && v === this._virtual;
@@ -680,6 +694,7 @@ class KeepGridView extends obsidian.BasesView {
 				wrapHeights: [...card.querySelectorAll(".kg-lite-image-wrap")].map(wrap => wrap.getBoundingClientRect().height),
 			}));
 			if (!valid()) return;
+			if (readings.some(reading => reading.height === 0)) { this._measurePaused = true; return; }
 			for (let i = 0; i < results.length; i++) {
 				const { item, ...result } = results[i];
 				Object.assign(item, result, { height: Math.max(1, readings[i].height), clipped: readings[i].clipped, measured: true, measuredEpoch: epoch });
@@ -699,7 +714,7 @@ class KeepGridView extends obsidian.BasesView {
 		} finally {
 			for (const card of cards) if (card.parentElement === this._measureEl) card.remove();
 			if (this._batchRun === run) this._batchRun = null;
-			if (this._virtual && this._renderToken === this._virtual.token) requestAnimationFrame(() => this._renderVirtualWindow());
+			if (this._virtual && this._renderToken === this._virtual.token && !this._measurePaused) requestAnimationFrame(() => this._renderVirtualWindow());
 		}
 	}
 

@@ -277,3 +277,60 @@ test('all image vault events and CSS changes invalidate open views', async () =>
   handlers.get('css-change')();
   assert.equal(h.plugin._cssGeneration, 1); assert.equal(refreshed, 6);
 });
+
+function zeroWhenNotRendered(h, hidden = () => false) {
+  const proto = h.window.HTMLElement.prototype, rect = proto.getBoundingClientRect;
+  proto.getBoundingClientRect = function () {
+    if (!this.isConnected || hidden(this)) return { width: 0, height: 0, top: 0, bottom: 0, left: 0, right: 0 };
+    return rect.call(this);
+  };
+}
+
+test('onunload tears the view down but keeps a scroll position saved for navigating back', async () => {
+  const h = harness(), entries = h.entries(80);
+  h.plugin._scrollPositions = new Map();
+  h.view._renderToken = 1; h.view._renderVirtual(entries, 1, 0, false); await h.settle();
+  h.view._scrollEl.scrollTop = 1200;
+  h.view._saveScrollPosition(null, true);
+  assert.equal(h.plugin._views.has(h.view), true);
+  h.view.onunload();
+  assert.equal(h.plugin._views.has(h.view), false);
+  assert.equal(h.view._virtual, null);
+  assert.equal(h.plugin._scrollPositions.size, 1);
+  h.view._scrollEl.dispatchEvent(new h.window.Event('scroll'));
+  assert.equal(h.frames.length, 0);
+  h.view.onunload();
+  assert.equal(h.plugin._scrollPositions.size, 1);
+  h.view.onClose();
+  assert.equal(h.plugin._scrollPositions.size, 0);
+});
+
+test('a view whose container was cleared stops measuring and never caches 0px heights', async () => {
+  const h = harness(), entries = h.entries(200);
+  zeroWhenNotRendered(h);
+  h.view._renderToken = 1; h.view._renderVirtual(entries, 1, 0, false); await h.settle();
+  h.plugin._cardLayoutCache.clear();
+  const measuredBefore = h.view._virtual.sections[0].measuredPrefixEnd;
+  h.view._scrollEl.replaceChildren();
+  h.view._scrollEl.scrollTop = 3000;
+  h.view._renderVirtualWindow(); await h.settle();
+  assert.equal(h.plugin._cardLayoutCache.size, 0);
+  assert.equal(h.view._virtual.sections[0].measuredPrefixEnd, measuredBefore);
+  assert.equal(h.frames.length, 0);
+});
+
+test('a measuring box that is not rendered pauses measurement and resumes later', async () => {
+  const h = harness(), entries = h.entries(60);
+  let hidden = true;
+  zeroWhenNotRendered(h, el => hidden && el.closest?.('.kg-measure'));
+  h.view._renderToken = 1; h.view._renderVirtual(entries, 1, 0, false); await h.settle();
+  assert.equal(h.plugin._cardLayoutCache.size, 0);
+  assert.equal(h.view._virtual.sections[0].items.some(item => item.measured), false);
+  assert.equal(h.frames.length, 0);
+  hidden = false;
+  h.view._renderVirtualWindow(); await h.settle();
+  const measured = h.view._virtual.sections[0].items.filter(item => item.measured);
+  assert.ok(measured.length > 0);
+  assert.ok(measured.every(item => item.height > 1));
+  h.view.onClose();
+});
