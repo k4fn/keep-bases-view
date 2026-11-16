@@ -60,7 +60,7 @@ function harness() {
     performance, console, setTimeout, clearTimeout, queueMicrotask, ResizeObserver: class { observe() {} disconnect() {} },
     requestAnimationFrame: fn => frames.push(fn), Image: class {},
   });
-  vm.runInContext(fs.readFileSync('main.js', 'utf8') + '\nglobalThis.API = { KeepGridView, KeepBasesViewPlugin, extractBodyMarkdownInfo, lruSet };', context);
+  vm.runInContext(fs.readFileSync('main.js', 'utf8') + '\nglobalThis.API = { KeepGridView, KeepBasesViewPlugin, extractBodyMarkdownInfo, extractBodyMarkdown, lruSet };', context);
   const plugin = Object.assign(new context.API.KeepBasesViewPlugin(), {
     settings: {}, _views: new Set(), _cssGeneration: 0, _cardLayoutCache: new Map(), _previewSourceCache: new Map(),
     _imageDimensionCache: new Map(), _inFlightImageProbes: new Map(), _imageProbeQueue: [], _activeImageProbes: 0, _maxConcurrentImageProbes: 8,
@@ -333,4 +333,107 @@ test('a measuring box that is not rendered pauses measurement and resumes later'
   assert.ok(measured.length > 0);
   assert.ok(measured.every(item => item.height > 1));
   h.view.onClose();
+});
+
+// Keep-style checklists. \u001f starts a row that the extraction adds:
+// H header, G ghost parent, C completed row, M the "+ N ticked items" line.
+const R = '\u001f';
+const checklist = checked => ['A', ' A1', ' A2', 'B', ' B1', ' B2', ' B3', 'C', ' C1', '  C1a', '  C1b', ' C2', 'D', ' D1']
+  .map(name => `${'\t'.repeat(name.length - name.trimStart().length)}- [${checked.includes(name.trim()) ? 'x' : ' '}] ${name.trim()}`).join('\n');
+const card = (h, body, mode = 'full', lines = 25) => h.extractBodyMarkdownInfo(body, lines, 1000, mode).markdown.split('\n');
+const names = rows => rows.map(row => row.replace(/^(\u001f.)?\s*- (\[.\] )?/, (_, kind, box) => `${kind?.[1] ?? ''}${box === '[x] ' ? 'x' : ''}:`));
+
+test('checklists: completed items follow the list under ghost parents', () => {
+  const h = harness();
+  // A subtree and B2 checked.
+  assert.deepEqual(names(card(h, checklist(['A', 'A1', 'A2', 'B2']))), [':B', ':B1', ':B3', ':C', ':C1', ':C1a', ':C1b', ':C2', ':D', ':D1',
+    `${R}H4 Completed items`, 'Cx:A', 'Cx:A1', 'Cx:A2', 'G:B', 'Cx:B2']);
+  // All children of B checked, B stays on top.
+  assert.deepEqual(names(card(h, checklist(['B1', 'B2', 'B3']))).slice(0, 3), [':A', ':A1', ':A2']);
+  assert.deepEqual(names(card(h, checklist(['B1', 'B2', 'B3']))).slice(11), [`${R}H3 Completed items`, 'G:B', 'Cx:B1', 'Cx:B2', 'Cx:B3']);
+  // One ghost C shared, ghost chain for the third level.
+  assert.deepEqual(names(card(h, checklist(['C1a', 'C2']))).slice(12), [`${R}H2 Completed items`, 'G:C', 'G:C1', 'Cx:C1a', 'Cx:C2']);
+  // A checked item with an unchecked item below it stays on top.
+  assert.deepEqual(card(h, checklist(['D'])), checklist(['D']).split('\n'));
+  // Rows keep their indentation; any status character counts as checked.
+  assert.deepEqual(card(h, '- [ ] B\n\t- [/] B2'), ['- [ ] B', `${R}H1 Completed item`, `${R}G- [ ] B`, `${R}C\t- [x] B2`]);
+});
+
+test('checklists: plain items, content, several lists, text around lists', () => {
+  const h = harness();
+  assert.deepEqual(card(h, '- Groceries\n\t- [ ] Milk\n\t- [x] Bread'),
+    ['- Groceries', '\t- [ ] Milk', `${R}H1 Completed item`, `${R}G- Groceries`, `${R}C\t- [x] Bread`]);
+  // A plain item and wrapped text under a checked item go with it.
+  assert.deepEqual(card(h, '- [x] Done\n  more\n\t- note\n- [ ] Open'), ['- [ ] Open', `${R}H1 Completed item`, `${R}C- [x] Done`, `${R}C\t- note`]);
+  // Each list has its own section, directly after it.
+  assert.deepEqual(card(h, 'Intro\n- [x] a\n- [ ] b\n\nText\n\n- [x] c\n- [ ] d\nEnd'),
+    ['Intro', '- [ ] b', `${R}H1 Completed item`, `${R}C- [x] a`, '', 'Text', '', '- [ ] d', `${R}H1 Completed item`, `${R}C- [x] c`, 'End']);
+  // Frontmatter, code blocks and blockquotes are left alone.
+  const untouched = '```\n- [x] code\n```\n> - [x] quoted\n> - [ ] quoted';
+  assert.deepEqual(card(h, `---\ntitle: x\n---\n${untouched}`), untouched.split('\n'));
+});
+
+test('checklists: phones leave completed items out', () => {
+  const h = harness();
+  assert.deepEqual(names(card(h, checklist(['A', 'A1', 'A2', 'B2']), 'open')), [':B', ':B1', ':B3', ':C', ':C1', ':C1a', ':C1b', ':C2', ':D', ':D1', `${R}M+ 4 ticked items`]);
+  assert.deepEqual(card(h, 'Text\n- [x] a\n\t- [x] b\nEnd', 'open'), ['Text', `${R}M+ 2 ticked items`, 'End']);
+});
+
+test('checklists: the line limit applies after completed items have left their place', () => {
+  const h = harness();
+  const body = Array.from({ length: 60 }, (_, i) => `- [${i < 50 ? 'x' : ' '}] item ${i}`).join('\n');
+  const info = h.extractBodyMarkdownInfo(body, 25, 1000, 'full'), rows = info.markdown.split('\n');
+  assert.deepEqual(rows.slice(0, 12), [...Array.from({ length: 10 }, (_, i) => `- [ ] item ${50 + i}`), `${R}H50 Completed items`, `${R}C- [x] item 0`]);
+  assert.equal(rows.length, 25); assert.equal(info.truncated, true);
+});
+
+test('checklists: off, and notes without checked items, are extracted as before', () => {
+  const h = harness();
+  for (const body of [checklist(['A', 'B2']), '- [ ] a\n- [ ] b', 'text [x] text', '---\ntitle: x\n---\n\n- [x] a']) {
+    assert.equal(JSON.stringify(h.extractBodyMarkdownInfo(body, 25, 1000, '')), JSON.stringify(h.extractBodyMarkdownInfo(body, 25, 1000)));
+    assert.equal(h.view._parsePreviewBlocks(h.extractBodyMarkdown(body)).filter(block => block.row || block.type === 'completed').length, 0);
+  }
+  for (const mode of ['full', 'open']) assert.equal(JSON.stringify(h.extractBodyMarkdownInfo('- [ ] a\n- [ ] b\ntext [x]', 25, 1000, mode)), JSON.stringify(h.extractBodyMarkdownInfo('- [ ] a\n- [ ] b\ntext [x]')));
+});
+
+test('checklists: card rows, and the card line limit', async () => {
+  const h = harness(), [entry] = h.entries(1);
+  h.contents.set(entry.file.path, checklist(['A', 'A1', 'A2', 'B2', 'C', 'C1', 'C1a', 'C1b', 'C2']));
+  h.plugin.settings.keepChecklists = true;
+  h.view._cardMaxHeight = 200; // 10 lines
+  h.view._renderToken = 1; h.view._renderVirtual([entry], 1, 0, false); await h.settle();
+  const rows = () => [...h.view._virtual.mounted.values()][0]._keepBodyEl.children;
+  const describe = row => `${row.className.replace(/kg-lite-/g, '')}|${row.querySelector('input')?.checked ?? ''}|${row.textContent}|${row.style.marginLeft}`;
+  assert.deepEqual([...rows()].map(describe), [
+    'task|false|B|', 'task|false|B1|20px', 'task|false|B3|20px', 'task|false|D|', 'task|false|D1|20px',
+    'completed||9 Completed items|', 'task done|true|A|', 'task done|true|A1|20px', 'task done|true|A2|20px',
+    'task ghost|false|B|']);
+  assert.equal([...h.view._virtual.mounted.values()][0]._keepBodyEl.dataset.keepTruncated, 'true');
+});
+
+test('checklists: changing the setting or the device class re-measures the cards', async () => {
+  const h = harness(), [entry] = h.entries(1);
+  h.contents.set(entry.file.path, '- [x] a\n- [ ] b');
+  const render = async token => { h.view._contentEl?.empty(); h.view._renderToken = token; h.view._renderVirtual([entry], token, 0, false); await h.settle(); };
+  const shown = () => [...[...h.view._virtual.mounted.values()][0]._keepBodyEl.children].map(row => row.textContent);
+  // Off by default.
+  await render(1);
+  assert.deepEqual(shown(), ['a', 'b']);
+  h.plugin.settings.keepChecklists = true;
+  await render(1.5);
+  const signature = h.view._getRenderSignature([entry]), key = h.view._layoutConfigKey;
+  assert.deepEqual(shown(), ['b', '1 Completed item', 'a']);
+  h.plugin.settings.keepChecklists = false;
+  assert.notEqual(h.view._getRenderSignature([entry]), signature);
+  await render(2);
+  assert.notEqual(h.view._layoutConfigKey, key);
+  assert.deepEqual(shown(), ['a', 'b']);
+  h.plugin.settings.keepChecklists = true; h.window.document.body.classList.add('is-phone');
+  await render(3);
+  assert.deepEqual(shown(), ['b', '+ 1 ticked item']);
+  h.window.document.body.classList.remove('is-phone');
+  const reads = h.reads();
+  await render(4);
+  assert.deepEqual(shown(), ['b', '1 Completed item', 'a']);
+  assert.equal(h.reads(), reads);
 });

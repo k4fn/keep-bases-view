@@ -49,6 +49,7 @@ Open **Settings > Community Plugins > Keep Bases View**:
 - **Specific .base file path** - Path used by the `Open specific .base file` command.
 - **Open in popup** - Open cards in the popup editor by default.
 - **Popup max width (px)** - Maximum width of the edit popup. Default is `800`.
+- **Keep-style checklists on cards** - Cards show a checklist's unchecked items first. Checked items follow under "N Completed items", below greyed copies of their unchecked parents; on phones they are left out. Disabled by default.
 - **Enable performance logging** - Log slow operations to the developer console for troubleshooting.
 
 ## Card Actions
