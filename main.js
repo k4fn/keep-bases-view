@@ -11,13 +11,169 @@ function lruSet(cache, key, value, limit) {
 	while (cache.size > limit) cache.delete(cache.keys().next().value);
 }
 
-function extractBodyMarkdownInfo(content, maxLines = 25, maxChars = 1000) {
+// Keep-style checklists on cards: a small list parser, and the split of a
+// list into the items that stay on top and its completed items.
+const LIST_QUOTE = /^(?: {0,3}>[ \t]?)*/;
+const LIST_ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])(?: +|\t)(?:\[(.)\](?:[ \t]|$))?(.*)$/;
+const LIST_RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const LIST_FENCE = /^[ \t]*(`{3,}|~{3,})/;
+const HAS_CHECKED_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?: +|\t)\[[^ ]\](?:[ \t]|$)/m;
+// Starts a line that extractBodyMarkdownInfo adds for the Completed section,
+// followed by H (header), G (ghost parent), C (completed row) or M (the
+// "+ N ticked items" line).
+const KEEP_ROW = "\u001f";
+
+function listIndentColumns(indent) {
+	let cols = 0;
+	for (const ch of indent) cols = ch === "\t" ? cols + 4 - (cols % 4) : cols + 1;
+	return cols;
+}
+
+// The lists of a note body. Lists in blockquotes and callouts are left alone.
+function parseChecklists(lines) {
+	const lists = [];
+	let list = null, listKind = "", listQuoteDepth = 0, stack = [], last = null, blanks = [], fence = null;
+	const close = () => {
+		if (list) {
+			list.endLine = Math.max(...list.items.map(it => it.ownLines[it.ownLines.length - 1]));
+			list.hasCheckbox = listQuoteDepth === 0 && list.items.some(it => it.status !== null);
+			for (const it of list.items) {
+				let boxedAncestor = false;
+				for (let p = it.parent; p; p = p.parent) if (p.status !== null) { boxedAncestor = true; break; }
+				it.kind = it.status !== null ? "checkbox" : boxedAncestor ? "content" : "plain";
+			}
+			lists.push(list);
+		}
+		list = null; stack = []; last = null; blanks = [];
+	};
+	const flushBlanks = () => { if (last) last.ownLines.push(...blanks); blanks = []; };
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		const quote = LIST_QUOTE.exec(line)[0];
+		const quoteDepth = quote.split(">").length - 1;
+		const rest = line.slice(quote.length);
+
+		if (fence) {
+			if (fence.owner) fence.owner.ownLines.push(i);
+			const m = LIST_FENCE.exec(rest);
+			if (m && m[1][0] === fence.char && m[1].length >= fence.len && rest.trim() === m[1]) fence = null;
+			continue;
+		}
+		if (list && quoteDepth !== listQuoteDepth) close();
+		if (rest.trim() === "") { if (list) blanks.push(i); continue; }
+		if (LIST_RULE.test(rest)) { close(); continue; }
+
+		const m = LIST_ITEM.exec(rest);
+		if (m) {
+			const cols = listIndentColumns(m[1]), kind = m[2][m[2].length - 1];
+			while (stack.length && stack[stack.length - 1].indentCols >= cols) stack.pop();
+			// A different marker at the top level starts a new list (CommonMark).
+			if (list && stack.length === 0 && kind !== listKind) close();
+			if (!list) {
+				// Four or more columns without a parent is an indented code block.
+				if (cols > 3) continue;
+				list = { items: [], endLine: i, hasCheckbox: false };
+				listKind = kind; listQuoteDepth = quoteDepth;
+			}
+			flushBlanks();
+			const parent = stack[stack.length - 1] ?? null;
+			const item = { index: list.items.length, ownLines: [i], indent: m[1], indentCols: cols,
+				status: m[3] === undefined ? null : m[3][0], text: m[4], kind: "plain", parent };
+			list.items.push(item); stack.push(item); last = item;
+			continue;
+		}
+
+		// Any other text belongs to the innermost open item whose content it is indented to.
+		const fenceOpen = LIST_FENCE.exec(rest);
+		let owner = null;
+		if (list) {
+			const cols = listIndentColumns(/^[ \t]*/.exec(rest)[0]);
+			while (stack.length && stack[stack.length - 1].indentCols + 2 > cols) stack.pop();
+			owner = stack[stack.length - 1] ?? null;
+			if (owner) { flushBlanks(); owner.ownLines.push(i); last = owner; }
+			else close();
+		}
+		if (fenceOpen) fence = { char: fenceOpen[1][0], len: fenceOpen[1].length, owner };
+	}
+	close();
+	return lists;
+}
+
+// Splits a list into the items that stay on top and the Completed section.
+// An item stays on top if it, or anything below it, is unchecked. Completed
+// items are listed under ghosts of the ancestors that stay on top.
+function partitionChecklist(list) {
+	const items = list.items;
+	const hasUnchecked = new Array(items.length).fill(false);
+	for (let i = items.length - 1; i >= 0; i--) {
+		const it = items[i];
+		if (it.status === " ") hasUnchecked[i] = true;
+		if (hasUnchecked[i] && it.parent) hasUnchecked[it.parent.index] = true;
+	}
+	const onTop = new Array(items.length).fill(true);
+	for (const it of items) {
+		if (it.kind === "checkbox") onTop[it.index] = hasUnchecked[it.index];
+		else if (it.kind === "content") onTop[it.index] = onTop[it.parent.index];
+	}
+	const below = new Array(items.length).fill(0);
+	for (let i = items.length - 1; i >= 0; i--) {
+		const it = items[i];
+		if (it.parent) below[it.parent.index] += below[i] + (!onTop[i] && it.kind === "checkbox" ? 1 : 0);
+	}
+	const result = { top: 0, completed: [], count: 0, hidden: [] };
+	for (const it of items) {
+		if (onTop[it.index]) {
+			result.top++;
+			if (below[it.index] > 0) result.completed.push({ item: it, kind: "ghost" });
+		} else {
+			result.hidden.push(it);
+			if (it.kind === "checkbox") result.count++;
+			result.completed.push({ item: it, kind: it.kind === "checkbox" ? "item" : "content" });
+		}
+	}
+	return result;
+}
+
+// Rewrites a note body for a card: completed items leave their place.
+// mode "full": each list is followed by "N Completed items" and its completed
+// items under ghost parents. mode "open": completed items are left out; the
+// list ends with "+ N ticked items", if the card has room for that line.
+function keepChecklistBody(body, mode) {
+	const lines = body.split("\n").map(line => line.endsWith("\r") ? line.slice(0, -1) : line);
+	const hidden = new Set(), sections = new Map();
+	for (const list of parseChecklists(lines)) {
+		if (!list.hasCheckbox) continue;
+		const part = partitionChecklist(list);
+		if (!part.count) continue;
+		for (const it of part.hidden) for (const l of it.ownLines) hidden.add(l);
+		const plural = part.count === 1 ? "" : "s";
+		const rows = [];
+		if (mode === "full") {
+			rows.push(`${KEEP_ROW}H${part.count} Completed item${plural}`);
+			for (const { item, kind } of part.completed) {
+				const box = kind === "content" || item.status === null ? "" : kind === "ghost" ? " [ ]" : " [x]";
+				rows.push(`${KEEP_ROW}${kind === "ghost" ? "G" : "C"}${item.indent}-${box} ${item.text}`);
+			}
+		} else rows.push(`${KEEP_ROW}M+ ${part.count} ticked item${plural}`);
+		sections.set(list.endLine, rows);
+	}
+	const out = [];
+	for (let i = 0; i < lines.length; i++) {
+		if (!hidden.has(i)) out.push(lines[i]);
+		if (sections.has(i)) out.push(...sections.get(i));
+	}
+	return out.join("\n");
+}
+
+function extractBodyMarkdownInfo(content, maxLines = 25, maxChars = 1000, checklistMode = "") {
 	let body = content;
 	if (body.startsWith("---")) {
 		const end = body.indexOf("\n---", 3);
 		if (end !== -1) body = body.slice(end + 4);
 		if (end !== -1) { let first = 0; while (first < body.length && /\s/.test(body[first])) first++; body = body.slice(first); }
 	}
+	if (checklistMode && HAS_CHECKED_ITEM.test(body)) body = keepChecklistBody(body, checklistMode);
 	let pos = 0, lines = 1;
 	const limit = Math.min(body.length, maxChars);
 	while (lines <= maxLines) {
@@ -348,6 +504,13 @@ class KeepGridView extends obsidian.BasesView {
 		return this._cardWidthPc;
 	}
 
+	// "": checklists as written. "full": completed items in a Completed
+	// section below their list. "open" (phones): completed items left out.
+	_checklistMode() {
+		if (this.plugin?.settings?.keepChecklists !== true) return "";
+		return document.body.classList.contains("is-phone") ? "open" : "full";
+	}
+
 	_isMobileEvenColumns() {
 		if (this.plugin?.settings?.mobileEvenColumns !== true) return false;
 		return document.body.classList.contains("is-phone") || document.body.classList.contains("is-mobile");
@@ -474,7 +637,7 @@ class KeepGridView extends obsidian.BasesView {
 
 		const configKey = [cardWidth, this._cardTitlePropertyId, this._imagePropertyId, this._imageFit,
 			this._cardMaxHeight, this._basePreviewHeight, this._showTags, this._showPinned,
-			this._showBasePreview, this._previewImages, this._getVirtualPreviewLines(),
+			this._showBasePreview, this._previewImages, this._getVirtualPreviewLines(), this._checklistMode(),
 			(this.data?.properties ?? []).join("\u001e"), this.plugin._cssGeneration,
 			window.devicePixelRatio, getComputedStyle(this._scrollEl).fontSize].join("\u001f");
 		const changed = this._layoutConfigKey !== configKey;
@@ -938,7 +1101,7 @@ class KeepGridView extends obsidian.BasesView {
 			...(this.data?.properties ?? []),
 		];
 
-		config.push(this.plugin._cssGeneration);
+		config.push(this.plugin._cssGeneration, this._checklistMode());
 		const entrySig = entries.map(entry => this._entrySignature(entry));
 
 		return JSON.stringify({ config, entries: entrySig });
@@ -1277,6 +1440,15 @@ class KeepGridView extends obsidian.BasesView {
 		const blocks = [];
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
+			if (line[0] === KEEP_ROW) {
+				// A row of a checklist's Completed section; cut-off rows are dropped.
+				const kind = line[1], rest = line.slice(2);
+				const row = kind === "H" || kind === "M" ? null : rest.match(/^(\s*)-(?: (\[[ x]\]))?(?: (.*))?$/);
+				if ((kind === "H" || kind === "M") && rest) blocks.push({ type: kind === "H" ? "completed" : "more", text: rest, count: 1 });
+				else if (row && (kind === "G" || kind === "C")) blocks.push({ type: row[2] ? "task" : "bullet", text: this._cleanPreviewText(row[3] ?? ""),
+					indent: row[1], checked: row[2] === "[x]", row: kind === "G" ? "ghost" : "done", count: 1 });
+				continue;
+			}
 			const code = this._readCodeBlock(lines, i);
 			if (code) { blocks.push({ type: "code", value: code, count: Math.max(1, code.lines.length) }); i = code.endIndex; continue; }
 			const table = this._readMarkdownTable(lines, i);
@@ -1313,11 +1485,11 @@ class KeepGridView extends obsidian.BasesView {
 				if (this._previewImages) this._renderPreviewImage(bodyEl, item?.imageLocks?.find(lock => lock.raw === block.value.raw) ?? block.value);
 				else bodyEl.createDiv({ cls: "kg-lite-line", text: block.text });
 			} else if (block.type === "task") {
-				const row = bodyEl.createDiv({ cls: "kg-lite-task" }); this._applyPreviewIndent(row, block.indent);
+				const row = bodyEl.createDiv({ cls: block.row ? `kg-lite-task kg-lite-${block.row}` : "kg-lite-task" }); this._applyPreviewIndent(row, block.indent);
 				const checkbox = row.createEl("input", { type: "checkbox" }); checkbox.checked = block.checked; checkbox.disabled = true;
 				if (block.text) row.createSpan({ text: block.text });
 			} else if (block.type === "bullet") {
-				const row = bodyEl.createDiv({ cls: "kg-lite-bullet" }); this._applyPreviewIndent(row, block.indent);
+				const row = bodyEl.createDiv({ cls: block.row ? `kg-lite-bullet kg-lite-${block.row}` : "kg-lite-bullet" }); this._applyPreviewIndent(row, block.indent);
 				row.createSpan({ cls: "kg-lite-bullet-dot", text: "-" }); row.createSpan({ text: block.text });
 			} else bodyEl.createDiv({ cls: `kg-lite-${block.type}`, text: block.text });
 			renderedLines += Math.min(block.count, remaining);
@@ -1477,12 +1649,13 @@ class KeepGridView extends obsidian.BasesView {
 	}
 
 	async _getPreviewSource(file, maxLines, maxChars) {
-		const cacheKey = `${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${file.stat?.size ?? 0}\u001f${maxLines}\u001f${maxChars}`;
+		const checklistMode = this._checklistMode();
+		const cacheKey = `${file.path}\u001f${file.stat?.mtime ?? 0}\u001f${file.stat?.size ?? 0}\u001f${maxLines}\u001f${maxChars}\u001f${checklistMode}`;
 		const cache = this.plugin?._previewSourceCache;
 		if (cache?.has(cacheKey)) { const value = cache.get(cacheKey); lruSet(cache, cacheKey, value, 3000); return value; }
 
 		const content = await this.app.vault.cachedRead(file);
-		const preview = extractBodyMarkdownInfo(content, maxLines, maxChars);
+		const preview = extractBodyMarkdownInfo(content, maxLines, maxChars, checklistMode);
 		if (cache) lruSet(cache, cacheKey, preview, 3000);
 		return preview;
 	}
@@ -1721,6 +1894,17 @@ class KeepBasesViewSettingTab extends obsidian.PluginSettingTab {
 				}));
 
 		new obsidian.Setting(containerEl)
+			.setName("Keep-style checklists on cards")
+			.setDesc("Cards show a checklist's unchecked items first. Checked items follow under \"Completed items\"; on phones they are left out.")
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.keepChecklists === true)
+				.onChange(async value => {
+					this.plugin.settings.keepChecklists = value;
+					await this.plugin.saveSettings();
+					this.plugin._refreshViews();
+				}));
+
+		new obsidian.Setting(containerEl)
 			.setName("Card move animation")
 			.setDesc("Animate cards sliding to their new positions when the column count changes due to a window or sidebar resize.")
 			.addToggle(toggle => toggle
@@ -1786,7 +1970,7 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 		this._maxConcurrentImageProbes = 8;
 		this._cssGeneration = 0;
 		this._views = new Set();
-		const refresh = () => { for (const view of this._views) { view._renderSignature = null; view._debouncedRender(); } };
+		const refresh = () => this._refreshViews();
 		this.registerEvent(this.app.workspace.on("css-change", () => { this._cssGeneration++; refresh(); }));
 		this.app.workspace.onLayoutReady(() => {
 			for (const event of ["create", "modify", "delete", "rename"]) this.registerEvent(this.app.vault.on(event, (file, oldPath) => {
@@ -1872,10 +2056,14 @@ class KeepBasesViewPlugin extends obsidian.Plugin {
 		}
 	}
 
+	_refreshViews() {
+		for (const view of this._views) { view._renderSignature = null; view._debouncedRender(); }
+	}
+
 	async loadSettings() {
 		this.settings = Object.assign(
 			{},
-			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true, mobileEvenColumns: false },
+			{ specificBaseFilePath: "", openInPopup: true, popupWidth: 800, enablePerformanceLogging: false, enableAnimation: true, mobileEvenColumns: false, keepChecklists: false },
 			await this.loadData()
 		);
 	}

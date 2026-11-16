@@ -393,7 +393,9 @@ body.is-mobile .kg-container {
 .kg-lite-line,
 .kg-lite-heading,
 .kg-lite-bullet,
-.kg-lite-task {
+.kg-lite-task,
+.kg-lite-completed,
+.kg-lite-more {
 	font-size: 13px;
 	line-height: 1.45;
 	color: var(--text-muted);
@@ -422,6 +424,29 @@ body.is-mobile .kg-container {
 .kg-lite-task input[type="checkbox"] {
 	flex: 0 0 auto;
 	margin-top: 1px;
+}
+
+/* Keep-style checklists: the Completed section below a list */
+.kg-lite-completed {
+	color: var(--text-faint);
+	margin-top: 6px;
+	padding-top: 4px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.kg-lite-ghost,
+.kg-lite-done,
+.kg-lite-more {
+	color: var(--text-faint);
+}
+
+/* Ghost parents are fainter than the completed items below them, as in Keep */
+.kg-lite-ghost {
+	opacity: 0.45;
+}
+
+.kg-lite-done > span:last-child {
+	text-decoration: line-through;
 }
 
 .kg-lite-table-wrap {
